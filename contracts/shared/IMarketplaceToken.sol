@@ -14,4 +14,8 @@ interface IMarketplaceToken {
         address recipient,
         uint256 amount
     ) external returns (bool);
+    function soulboundBalanceOf(
+        address account
+    ) external view returns (uint256);
+    function soulboundFor(address account, uint256 amount) external;
 }

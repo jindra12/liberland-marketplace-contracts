@@ -25,6 +25,10 @@ export interface DeploymentManifest {
     address: string;
     poolManager: string;
   };
+  dao: {
+    address: string;
+    rewardToken: string;
+  };
 }
 
 export interface TokenClient {

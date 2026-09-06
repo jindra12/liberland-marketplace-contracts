@@ -31,6 +31,9 @@ contract MarketplaceV4SwapRouter is
     using SafeERC20 for IERC20;
 
     IPoolManager public poolManager;
+    address public governance;
+    address public feeRecipient;
+    uint256 public feeBps;
     bool public upgradesEnabled;
     bool public upgradesPermanentlyDisabled;
     uint256 private _reentrancyStatus;
@@ -47,6 +50,10 @@ contract MarketplaceV4SwapRouter is
     error UpgradesAlreadyDisabled();
     error UpgradesPermanentlyDisabledError();
     error ReentrantCall();
+    error GovernanceOnly();
+    error InvalidGovernance();
+    error InvalidFee();
+    error FeeTransferFailed();
 
     event SwapExecuted(
         address indexed sender,
@@ -57,6 +64,8 @@ contract MarketplaceV4SwapRouter is
     );
     event UpgradesEnabled();
     event UpgradesPermanentlyDisabled();
+    event GovernanceUpdated(address indexed governance);
+    event FeeUpdated(uint256 feeBps, address indexed recipient);
 
     struct SwapRequest {
         PoolKey key;
@@ -115,11 +124,13 @@ contract MarketplaceV4SwapRouter is
             request.zeroForOne ? request.key.currency0 : request.key.currency1;
         Currency outputCurrency =
             request.zeroForOne ? request.key.currency1 : request.key.currency0;
+        uint256 fee = (request.amountIn * feeBps) / 10_000;
+        uint128 poolAmountIn = request.amountIn - uint128(fee);
         BalanceDelta delta = poolManager.swap(
             request.key,
             SwapParams(
                 request.zeroForOne,
-                -int256(uint256(request.amountIn)),
+                -int256(uint256(poolAmountIn)),
                 request.zeroForOne
                     ? TickMath.MIN_SQRT_PRICE + 1
                     : TickMath.MAX_SQRT_PRICE - 1
@@ -139,19 +150,37 @@ contract MarketplaceV4SwapRouter is
             revert InsufficientOutput(request.amountOutMinimum, amountOut);
 
         _settle(inputCurrency, request.payer, amountIn);
+        _collectFee(inputCurrency, request.payer, fee);
         poolManager.take(outputCurrency, request.payer, amountOut);
 
         return abi.encode(amountOut);
     }
 
-    function enableUpgrades() external onlyOwner {
+    function setGovernance(address governance_) external onlyOwner {
+        if (governance != address(0) || governance_ == address(0))
+            revert InvalidGovernance();
+        governance = governance_;
+        emit GovernanceUpdated(governance_);
+    }
+
+    function setFee(
+        uint256 feeBps_,
+        address feeRecipient_
+    ) external onlyGovernance {
+        if (feeBps_ > 1_000 || feeRecipient_ == address(0)) revert InvalidFee();
+        feeBps = feeBps_;
+        feeRecipient = feeRecipient_;
+        emit FeeUpdated(feeBps_, feeRecipient_);
+    }
+
+    function enableUpgrades() external onlyGovernance {
         if (upgradesPermanentlyDisabled)
             revert UpgradesPermanentlyDisabledError();
         upgradesEnabled = true;
         emit UpgradesEnabled();
     }
 
-    function disableUpgradesPermanently() external onlyOwner {
+    function disableUpgradesPermanently() external onlyGovernance {
         if (upgradesPermanentlyDisabled || !upgradesEnabled)
             revert UpgradesAlreadyDisabled();
         upgradesEnabled = false;
@@ -179,8 +208,31 @@ contract MarketplaceV4SwapRouter is
         poolManager.settle();
     }
 
-    function _authorizeUpgrade(address) internal view override onlyOwner {
+    function _collectFee(
+        Currency currency,
+        address payer,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        if (currency.isAddressZero()) {
+            (bool success, ) = payable(feeRecipient).call{value: amount}("");
+            if (!success) revert FeeTransferFailed();
+            return;
+        }
+        IERC20(Currency.unwrap(currency)).safeTransferFrom(
+            payer,
+            feeRecipient,
+            amount
+        );
+    }
+
+    function _authorizeUpgrade(address) internal view override onlyGovernance {
         if (!upgradesEnabled) revert UpgradesDisabled();
+    }
+
+    modifier onlyGovernance() {
+        if (msg.sender != governance) revert GovernanceOnly();
+        _;
     }
 
     receive() external payable {}

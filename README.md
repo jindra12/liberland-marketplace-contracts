@@ -62,6 +62,9 @@ The first implementation contains:
 - `MarketplaceV4SwapRouter`, an upgrade-safe exact-input single-hop adapter that uses
   the V4 `PoolManager.unlock` callback, settles the input currency, and takes the output;
 - configuration-driven EVM deployment through UUPS proxies; and
+- one-transaction coordinator deployment that creates the token, DAO/reward token,
+  and swap-router implementations and proxies, then emits their addresses and token
+  metadata; and
 - regression tests for supply ownership, upgrade gates, irreversible upgrade shutdown,
   swap settlement, and minimum-output protection.
 
@@ -103,9 +106,36 @@ const manifest = await deployMarketplaceFromBrowser({
   signer,
   tokenArtifact,
   swapArtifact,
+  daoArtifact,
+  rewardArtifact,
   proxyArtifact,
 });
 ```
+
+The deployment creates the DAO and its marketplace LP reward token, then assigns the
+DAO as governance for the token and swap router.
+
+## Coordinated Deployment and Cost Estimation
+
+`MarketplaceDeploymentCoordinator` deploys the complete marketplace set in one call.
+It accepts the compiled implementation creation bytecode so that the coordinator stays
+below the EVM contract-size limit, creates UUPS proxies, wires DAO governance, and emits
+`MarketplaceDeployed` with proxy addresses, implementation addresses, pool-manager
+address, token metadata, and initial supply. Pass the canonical/shared V4
+`POOL_MANAGER_ADDRESS` for production, or omit it and provide the compiled PoolManager
+creation bytecode for an isolated local deployment.
+
+The Hardhat estimator includes coordinator deployment gas and the complete deployment
+transaction gas:
+
+```bash
+TOKEN_NAME="Marketplace Token" TOKEN_SYMBOL="MKT" \
+POOL_MANAGER_ADDRESS="0x..." yarn estimate:deployment --network sepolia
+```
+
+The printed native cost is based on the provider's current gas-price estimate and is
+not a quote for a future block. The estimator uses the local PoolManager creation code
+when `POOL_MANAGER_ADDRESS` is absent.
 
 `scripts/deploy.ts` is only the console runner. It loads the same artifacts through
 Hardhat, calls the browser-safe function, and writes the resulting manifest to disk.

@@ -90,6 +90,10 @@ The supported targets are:
   Reserve the `function` keyword for class methods or APIs that explicitly require a
   function declaration. Do not leave declaration-style `describe`, `it`, fixture, or
   helper functions in new or modified TypeScript files.
+- Do not invent local replacement types, runtime adapters, casts, or module shims for
+  third-party integrations. Verify the supported package versions and official typing
+  entrypoints first, then fix dependency versions or TypeScript configuration so the
+  vendor-provided types are used directly.
 
 ## Questions Before Implementation
 

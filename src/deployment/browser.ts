@@ -1,4 +1,4 @@
-import { ContractFactory, Interface, type InterfaceAbi, type Signer } from "ethers";
+import { Contract, ContractFactory, Interface, type InterfaceAbi, type Signer } from "ethers";
 import type { DeploymentManifest } from "../client/types";
 
 export interface DeploymentArtifact {
@@ -16,6 +16,8 @@ export interface BrowserEvmDeploymentOptions {
   signer: Signer;
   tokenArtifact: DeploymentArtifact;
   swapArtifact: DeploymentArtifact;
+  daoArtifact: DeploymentArtifact;
+  rewardArtifact: DeploymentArtifact;
   proxyArtifact: DeploymentArtifact;
 }
 
@@ -67,6 +69,42 @@ export const deployMarketplaceFromBrowser = async (
   );
   await swapProxy.waitForDeployment();
 
+  const rewardImplementation = await deploy(
+    new ContractFactory(options.rewardArtifact.abi, options.rewardArtifact.bytecode, options.signer),
+  );
+
+  const daoImplementation = await deploy(
+    new ContractFactory(options.daoArtifact.abi, options.daoArtifact.bytecode, options.signer),
+  );
+  const daoInitialization = new Interface(options.daoArtifact.abi).encodeFunctionData("initialize", [
+    await tokenProxy.getAddress(),
+    deployer,
+    await rewardImplementation.getAddress(),
+  ]);
+  const daoProxy = await tokenProxyFactory.deploy(
+    await daoImplementation.getAddress(),
+    daoInitialization,
+  );
+  await daoProxy.waitForDeployment();
+  const tokenContract = new Contract(
+    await tokenProxy.getAddress(),
+    options.tokenArtifact.abi,
+    options.signer,
+  );
+  const swapContract = new Contract(
+    await swapProxy.getAddress(),
+    options.swapArtifact.abi,
+    options.signer,
+  );
+  await (await tokenContract.getFunction("setGovernance")(await daoProxy.getAddress())).wait();
+  await (await swapContract.getFunction("setGovernance")(await daoProxy.getAddress())).wait();
+  const daoContract = new Contract(
+    await daoProxy.getAddress(),
+    options.daoArtifact.abi,
+    options.signer,
+  );
+  const rewardToken = await daoContract.getFunction("rewardToken")();
+
   const network = await provider.getNetwork();
   return {
     chain: options.chain,
@@ -84,6 +122,10 @@ export const deployMarketplaceFromBrowser = async (
     swap: {
       address: await swapProxy.getAddress(),
       poolManager: options.poolManagerAddress,
+    },
+    dao: {
+      address: await daoProxy.getAddress(),
+      rewardToken: String(rewardToken),
     },
   };
 };

@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import hre from "hardhat";
 import type { DeploymentManifest, SupportedChain } from "../src/client/types";
 import { deployMarketplaceFromBrowser } from "../src/deployment/browser";
+import hre from "hardhat";
 
 const supportedChains: SupportedChain[] = ["ethereum", "tron", "solana"];
 
@@ -32,18 +32,25 @@ const main = async () => {
     );
   }
 
-  const { ethers } = hre;
-  const [deployer] = await ethers.getSigners();
+  const [deployer] = await hre.ethers.getSigners();
   const tokenName = requiredEnvironment("TOKEN_NAME");
   const tokenSymbol = requiredEnvironment("TOKEN_SYMBOL");
-  const initialSupply = ethers.parseUnits(
+  const initialSupply = hre.ethers.parseUnits(
     process.env.TOKEN_INITIAL_SUPPLY ?? "21000000",
     18,
   );
   const poolManagerAddress = requiredEnvironment("POOL_MANAGER_ADDRESS");
-  const [tokenArtifact, swapArtifact, proxyArtifact] = await Promise.all([
+  const [
+    tokenArtifact,
+    swapArtifact,
+    daoArtifact,
+    rewardArtifact,
+    proxyArtifact,
+  ] = await Promise.all([
     hre.artifacts.readArtifact("MarketplaceToken"),
     hre.artifacts.readArtifact("MarketplaceV4SwapRouter"),
+    hre.artifacts.readArtifact("MarketplaceDAO"),
+    hre.artifacts.readArtifact("MarketplaceLPToken"),
     hre.artifacts.readArtifact("ERC1967ProxyDeployment"),
   ]);
   const manifest: DeploymentManifest = await deployMarketplaceFromBrowser({
@@ -56,6 +63,8 @@ const main = async () => {
     signer: deployer,
     tokenArtifact,
     swapArtifact,
+    daoArtifact,
+    rewardArtifact,
     proxyArtifact,
   });
 

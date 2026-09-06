@@ -7,7 +7,12 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["node", "mocha"]
+    "types": [
+      "node",
+      "mocha",
+      "@nomicfoundation/hardhat-ethers",
+      "@openzeppelin/hardhat-upgrades"
+    ]
   },
   "include": ["hardhat.config.ts", "scripts", "test"]
 }
