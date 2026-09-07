@@ -1,4 +1,4 @@
-export type SupportedChain = "ethereum" | "tron" | "solana";
+export type SupportedChain = "ethereum" | "tron";
 
 export interface PoolKeyInput {
   currency0: string;
@@ -14,6 +14,12 @@ export interface DeploymentManifest {
   chainId: string;
   deployedAt: string;
   deployer: string;
+  implementations: {
+    token: string;
+    dao: string;
+    rewardToken: string;
+    swapRouter: string;
+  };
   token: {
     address: string;
     name: string;

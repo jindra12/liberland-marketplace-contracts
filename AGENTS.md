@@ -10,10 +10,6 @@ The supported targets are:
 
 - Ethereum-compatible networks, including Ethereum mainnet.
 - TRON, using the Solidity/TRON toolchain and TronWeb-compatible deployment output.
-- Solana, using an explicitly documented compatibility strategy. EVM Solidity bytecode
-  is not natively deployable to Solana; use a supported compiler/runtime such as Solang
-  or an EVM compatibility layer, or provide a separately implemented native Solana
-  program when the feature cannot be represented safely.
 
 ## Non-negotiable Security Rules
 
@@ -63,9 +59,6 @@ The supported targets are:
   providers/signers.
 - TRON deployment and interaction output must be usable by TronWeb, including TRON
   address/transaction conventions.
-- Solana output must be usable by the relevant `@solana/*` client libraries. Document
-  whether a deployment is a Solang-compiled program, an EVM compatibility deployment,
-  or a native Solana program with a separate ABI/IDL.
 - Do not claim cross-chain behavioral equivalence until the same authorization, asset,
   upgrade, and failure semantics are tested on each target.
 - Keep deployment logic deterministic and idempotent where possible. Record chain ID,
@@ -103,7 +96,5 @@ Resolve these project decisions before writing production contracts:
 - Should upgrades use UUPS, Transparent Proxy, or another OpenZeppelin-supported model?
 - Who controls upgrades, pauses, treasury funds, and emergency recovery?
 - Is gas sponsorship required through ERC-4337, ERC-2771, or both?
-- Is Solana compatibility expected through Solang, an EVM layer, or native Rust/Anchor
-  programs with equivalent interfaces?
 - Which networks, RPC providers, deployment accounts, and confirmation policies are
   supported in CI and production?

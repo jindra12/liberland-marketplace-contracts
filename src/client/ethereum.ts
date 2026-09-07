@@ -16,7 +16,11 @@ export class EvmTokenClient implements TokenClient {
   private readonly contract: Contract;
   private readonly signer: Signer;
 
-  constructor(address: string, signer: Signer, chain: "ethereum" | "tron" = "ethereum") {
+  constructor(
+    address: string,
+    signer: Signer,
+    chain: "ethereum" | "tron" = "ethereum",
+  ) {
     this.address = address;
     this.signer = signer;
     this.chain = chain;
@@ -28,16 +32,27 @@ export class EvmTokenClient implements TokenClient {
   }
 
   async transfer(recipient: string, amount: bigint): Promise<string> {
-    const transaction = await this.contract.getFunction("transfer")(recipient, amount);
+    const transaction = await this.contract.getFunction("transfer")(
+      recipient,
+      amount,
+    );
     return transaction.hash;
   }
 
   async approve(spender: string, amount: bigint): Promise<string> {
-    const transaction = await this.contract.getFunction("approve")(spender, amount);
+    const transaction = await this.contract.getFunction("approve")(
+      spender,
+      amount,
+    );
     return transaction.hash;
   }
 
-  async permit(owner: string, spender: string, amount: bigint, deadline: bigint) {
+  async permit(
+    owner: string,
+    spender: string,
+    amount: bigint,
+    deadline: bigint,
+  ) {
     const provider = this.signer.provider;
     if (!provider || !this.signer.signTypedData) {
       throw new Error("The signer must support EIP-712 typed-data signing.");

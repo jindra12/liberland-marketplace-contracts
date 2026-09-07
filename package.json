@@ -2,15 +2,14 @@
   "name": "@liberland/marketplace-contracts",
   "version": "0.1.0",
   "private": true,
-  "description": "Cross-chain Liberland Marketplace token and swap contracts",
+  "description": "Ethereum and TRON Liberland Marketplace token and swap contracts",
   "packageManager": "yarn@1.22.22",
   "exports": {
     ".": "./src/index.ts",
     "./deployment/browser": "./src/deployment/browser.ts",
     "./client/ethereum": "./src/client/ethereum.ts",
     "./client/thirdweb": "./src/client/thirdweb.ts",
-    "./client/tron": "./src/client/tron.ts",
-    "./client/solana": "./src/client/solana.ts"
+    "./client/tron": "./src/client/tron.ts"
   },
   "scripts": {
     "build": "hardhat compile",
@@ -41,7 +40,6 @@
   "dependencies": {
     "@openzeppelin/contracts": "^5.6.1",
     "@openzeppelin/contracts-upgradeable": "^5.6.1",
-    "@solana/web3.js": "^1.98.4",
     "@uniswap/v4-core": "^1.0.2",
     "@uniswap/v4-periphery": "^1.0.3",
     "ethers": "^6.17.0",

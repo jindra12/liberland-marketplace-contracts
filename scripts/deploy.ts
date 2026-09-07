@@ -4,7 +4,7 @@ import type { DeploymentManifest, SupportedChain } from "../src/client/types";
 import { deployMarketplaceFromBrowser } from "../src/deployment/browser";
 import hre from "hardhat";
 
-const supportedChains: SupportedChain[] = ["ethereum", "tron", "solana"];
+const supportedChains: SupportedChain[] = ["ethereum", "tron"];
 
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name];
@@ -26,12 +26,6 @@ const selectedChain = (): SupportedChain => {
 
 const main = async () => {
   const chain = selectedChain();
-  if (chain === "solana") {
-    throw new Error(
-      "Solana deployment requires the Solang deployment command and is not an EVM Hardhat deployment.",
-    );
-  }
-
   const [deployer] = await hre.ethers.getSigners();
   const tokenName = requiredEnvironment("TOKEN_NAME");
   const tokenSymbol = requiredEnvironment("TOKEN_SYMBOL");

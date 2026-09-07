@@ -10,10 +10,6 @@ properties and stable interfaces for marketplace clients. The initial chain targ
 
 - Ethereum mainnet and other EVM-compatible networks.
 - TRON through its Solidity-compatible toolchain and TronWeb.
-- Solana through a documented compatibility implementation. Solidity EVM bytecode cannot
-  simply be deployed natively to Solana, so each contract family must select one of:
-  Solang compilation, an EVM compatibility layer, or a separately implemented native
-  Solana program.
 
 The repository is included as a submodule by the frontend. It keeps its own contract and
 testing dependencies and exposes ABI/IDL and deployment artifacts for TypeScript clients.
@@ -47,8 +43,7 @@ contract version, proxy and implementation addresses where relevant, and deploym
 transaction IDs. The client layer will provide TypeScript-compatible interfaces for:
 
 - thirdweb and standard EVM providers/signers on Ethereum-compatible networks;
-- TronWeb on TRON; and
-- the applicable `@solana/*` libraries for Solang, EVM-layer, or native Solana output.
+- TronWeb on TRON.
 
 Cross-chain support means compatible documented behavior, not identical bytecode. Each
 target must be tested independently before being advertised as supported.
@@ -62,9 +57,8 @@ The first implementation contains:
 - `MarketplaceV4SwapRouter`, an upgrade-safe exact-input single-hop adapter that uses
   the V4 `PoolManager.unlock` callback, settles the input currency, and takes the output;
 - configuration-driven EVM deployment through UUPS proxies; and
-- one-transaction coordinator deployment that creates the token, DAO/reward token,
-  and swap-router implementations and proxies, then emits their addresses and token
-  metadata; and
+- browser-compatible TypeScript orchestration for sequential implementation/proxy
+  deployment against a canonical V4 PoolManager; and
 - regression tests for supply ownership, upgrade gates, irreversible upgrade shutdown,
   swap settlement, and minimum-output protection.
 
@@ -84,8 +78,7 @@ yarn typecheck
 
 Copy `.env.example` to an environment-specific configuration and select exactly one
 `DEPLOY_CHAIN` per deployment. The current deployment script supports EVM-compatible
-Ethereum/TRON targets and rejects Solana until the Solang artifact and deployment adapter
-are added. Never put private keys in the environment file committed to Git.
+Ethereum/TRON targets. Never put private keys in the environment file committed to Git.
 
 ## Browser Deployment
 
@@ -113,31 +106,31 @@ const manifest = await deployMarketplaceFromBrowser({
 ```
 
 The deployment creates the DAO and its marketplace LP reward token, then assigns the
-DAO as governance for the token and swap router.
-
-## Coordinated Deployment and Cost Estimation
-
-`MarketplaceDeploymentCoordinator` deploys the complete marketplace set in one call.
-It accepts the compiled implementation creation bytecode so that the coordinator stays
-below the EVM contract-size limit, creates UUPS proxies, wires DAO governance, and emits
-`MarketplaceDeployed` with proxy addresses, implementation addresses, pool-manager
-address, token metadata, and initial supply. Pass the canonical/shared V4
-`POOL_MANAGER_ADDRESS` for production, or omit it and provide the compiled PoolManager
-creation bytecode for an isolated local deployment.
-
-The Hardhat estimator includes coordinator deployment gas and the complete deployment
-transaction gas:
-
-```bash
-TOKEN_NAME="Marketplace Token" TOKEN_SYMBOL="MKT" \
-POOL_MANAGER_ADDRESS="0x..." yarn estimate:deployment --network sepolia
-```
-
-The printed native cost is based on the provider's current gas-price estimate and is
-not a quote for a future block. The estimator uses the local PoolManager creation code
-when `POOL_MANAGER_ADDRESS` is absent.
+DAO as governance for the token and swap router. The browser orchestrator submits the
+implementation and UUPS proxy deployments sequentially, using the canonical V4
+PoolManager supplied by the caller. UUPS is retained because it is the standardized
+upgradeable proxy option; EIP-1167 clones would be cheaper but permanently
+non-upgradeable.
 
 `scripts/deploy.ts` is only the console runner. It loads the same artifacts through
 Hardhat, calls the browser-safe function, and writes the resulting manifest to disk.
+
+To measure the same sequential flow locally without touching a live network:
+
+```bash
+TOKEN_NAME="Marketplace Token" TOKEN_SYMBOL="MKT" yarn estimate:deployment
+```
+
+The estimator deploys the sequence to an in-memory Hardhat network to measure gas
+units. It then reads current Ethereum mainnet fee data through the frontend's
+`REACT_APP_THIRDWEB` client ID using Thirdweb's documented Ethereum RPC endpoint.
+It reads the ETH/USD spot price directly from the canonical Uniswap V3 USDC/WETH
+0.05% pool at `0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640`. No deployment transaction
+is sent to mainnet. The output includes the measured gas, current fee quotes, ETH/USD
+spot price, and estimated cost in ETH and USD.
+
+The script loads `REACT_APP_THIRDWEB` from the shell first and then from the parent
+frontend `.env` file. It does not print the credential. `TOKEN_NAME` and
+`TOKEN_SYMBOL` describe the locally simulated deployment and do not affect mainnet.
 
 See [`AGENTS.md`](AGENTS.md) for mandatory engineering and security rules.

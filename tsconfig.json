@@ -14,5 +14,5 @@
       "@openzeppelin/hardhat-upgrades"
     ]
   },
-  "include": ["hardhat.config.ts", "scripts", "test"]
+  "include": ["hardhat.config.ts", "scripts", "src", "test"]
 }
