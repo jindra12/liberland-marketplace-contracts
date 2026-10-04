@@ -20,12 +20,17 @@ contract MarketplaceToken is
     UUPSUpgradeable,
     ERC2771ContextUpgradeable
 {
+    /// @notice Default fixed supply for a marketplace token deployment.
     uint256 public constant DEFAULT_INITIAL_SUPPLY = 21_000_000 ether;
 
+    /// @notice Whether DAO governance currently permits implementation upgrades.
     bool public upgradesEnabled;
+    /// @notice Whether upgrades have been irreversibly disabled by governance.
     bool public upgradesPermanentlyDisabled;
+    /// @notice DAO address authorized to manage soulbound balances and upgrades.
     address public governance;
     mapping(address => uint256) private _soulboundBalances;
+    /// @notice Timestamp when the account's current continuous soulbound period began.
     mapping(address => uint256) public soulboundSince;
 
     error UpgradesDisabled();
@@ -42,6 +47,7 @@ contract MarketplaceToken is
     error VotingSupplyTooLarge();
 
     /// @custom:oz-upgrades-unsafe-allow constructor state-variable-immutable
+    /// @notice Locks the implementation and records the sole trusted ERC-2771 forwarder.
     constructor(
         address trustedForwarder_
     ) ERC2771ContextUpgradeable(trustedForwarder_) {
@@ -54,7 +60,7 @@ contract MarketplaceToken is
     event TokensSoulbound(address indexed account, uint256 amount);
     event TokensUnsoulbound(address indexed account, uint256 amount);
 
-    /// @notice Initializes the fixed-supply token and assigns all supply to the deployer-selected owner.
+    /// @notice Initializes token metadata, ownership, and the fixed initial supply once.
     function initialize(
         string calldata name_,
         string calldata symbol_,
@@ -72,6 +78,7 @@ contract MarketplaceToken is
         _mint(initialOwner, initialSupply);
     }
 
+    /// @notice Sets the DAO exactly once; the owner must subsequently transfer ownership to it.
     function setGovernance(address governance_) external onlyOwner {
         if (governance != address(0)) revert GovernanceAlreadySet();
         if (governance_ == address(0)) revert InvalidGovernance();
@@ -79,20 +86,24 @@ contract MarketplaceToken is
         emit GovernanceUpdated(governance_);
     }
 
+    /// @notice Returns the non-transferable balance counted for governance voting.
     function soulboundBalanceOf(
         address account
     ) external view returns (uint256) {
         return _soulboundBalances[account];
     }
 
+    /// @notice Returns the account's transferable balance, excluding its rooted tokens.
     function liquidBalanceOf(address account) external view returns (uint256) {
         return balanceOf(account) - _soulboundBalances[account];
     }
 
+    /// @notice Roots caller-owned liquid tokens so they cannot transfer and count as votes.
     function soulbound(uint256 amount) external {
         _soulbound(_msgSender(), amount);
     }
 
+    /// @notice Roots tokens for an account as a DAO-authorized grant or pre-bound allocation.
     function soulboundFor(
         address account,
         uint256 amount
@@ -100,6 +111,7 @@ contract MarketplaceToken is
         _soulbound(account, amount);
     }
 
+    /// @notice Releases rooted tokens from voting weight; only DAO execution may call this.
     function unsoulbound(
         address account,
         uint256 amount
@@ -116,6 +128,7 @@ contract MarketplaceToken is
         emit TokensUnsoulbound(account, amount);
     }
 
+    /// @notice Temporarily enables UUPS upgrades through an authorized DAO call.
     function enableUpgrades() external onlyGovernance {
         if (upgradesPermanentlyDisabled)
             revert UpgradesPermanentlyDisabledError();
@@ -123,6 +136,7 @@ contract MarketplaceToken is
         emit UpgradesEnabled();
     }
 
+    /// @notice Irreversibly disables future UUPS upgrades through DAO execution.
     function disableUpgradesPermanently() external onlyGovernance {
         if (upgradesPermanentlyDisabled || !upgradesEnabled)
             revert UpgradesAlreadyDisabled();
@@ -131,15 +145,18 @@ contract MarketplaceToken is
         emit UpgradesPermanentlyDisabled();
     }
 
+    /// @dev Restricts implementation changes to enabled DAO-authorized calls.
     function _authorizeUpgrade(address) internal view override onlyGovernance {
         if (!upgradesEnabled) revert UpgradesDisabled();
     }
 
+    /// @dev Limits privileged token controls to the configured DAO contract.
     modifier onlyGovernance() {
         if (_msgSender() != governance) revert GovernanceOnly();
         _;
     }
 
+    /// @dev Moves liquid units into the rooted balance and updates voting checkpoints.
     function _soulbound(address account, uint256 amount) internal {
         if (amount == 0) revert InvalidAmount();
         uint256 liquidBalance =
@@ -156,12 +173,14 @@ contract MarketplaceToken is
         emit TokensSoulbound(account, amount);
     }
 
+    /// @dev Makes rooted balances, rather than liquid ERC-20 balances, govern votes.
     function _getVotingUnits(
         address account
     ) internal view override returns (uint256) {
         return _soulboundBalances[account];
     }
 
+    /// @dev Prevents ERC-20 transfers and burns from consuming the rooted balance.
     function _update(
         address from,
         address to,
@@ -175,6 +194,7 @@ contract MarketplaceToken is
         ERC20Upgradeable._update(from, to, value);
     }
 
+    /// @dev Resolves the signer appended by the configured trusted forwarder.
     function _msgSender()
         internal
         view
@@ -184,6 +204,7 @@ contract MarketplaceToken is
         return ERC2771ContextUpgradeable._msgSender();
     }
 
+    /// @dev Removes the trusted-forwarder signer suffix from forwarded calldata.
     function _msgData()
         internal
         view
@@ -193,6 +214,7 @@ contract MarketplaceToken is
         return ERC2771ContextUpgradeable._msgData();
     }
 
+    /// @dev Reports the signer suffix length expected by ERC-2771 context handling.
     function _contextSuffixLength()
         internal
         view
@@ -202,6 +224,7 @@ contract MarketplaceToken is
         return ERC2771ContextUpgradeable._contextSuffixLength();
     }
 
+    /// @notice Returns the shared EIP-2612 permit and Votes delegation nonce.
     function nonces(
         address owner
     )
@@ -213,15 +236,18 @@ contract MarketplaceToken is
         return super.nonces(owner);
     }
 
+    /// @notice Returns timestamp-based voting time used by Governor snapshots.
     function clock() public view override returns (uint48) {
         return uint48(block.timestamp);
     }
 
     // solhint-disable-next-line func-name-mixedcase
+    /// @notice Identifies timestamp mode to Governor and other ERC-6372 consumers.
     function CLOCK_MODE() public pure override returns (string memory) {
         return "mode=timestamp";
     }
 
+    /// @notice Returns the token's fixed 18-decimal precision.
     function decimals() public pure override returns (uint8) {
         return 18;
     }

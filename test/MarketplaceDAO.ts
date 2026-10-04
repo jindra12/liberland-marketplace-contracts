@@ -123,6 +123,10 @@ describe("MarketplaceDAO", () => {
     const { deployer, voter, recipient, token, dao, forwarderAddress } =
       await deployGovernance();
     assert.equal(await dao.quorumNumerator(), 4n);
+    assert.equal(await dao.votingDelay(), 24n * 60n * 60n);
+    assert.equal(await dao.votingPeriod(), 7n * 24n * 60n * 60n);
+    assert.equal(await dao.proposalThreshold(), hre.ethers.parseEther("1"));
+    assert.notEqual(await dao.rewardToken(), ZeroAddress);
     assert.equal(
       await token.getVotes(voter.address),
       hre.ethers.parseEther("1000000"),
@@ -198,6 +202,46 @@ describe("MarketplaceDAO", () => {
     await assert.rejects(
       router.connect(voter).getFunction("setFee")(10, recipient.address),
       /GovernanceOnly/,
+    );
+  });
+
+  it("prebinds DAO-funded tokens only through an approved proposal", async () => {
+    const { deployer, voter, recipient, token, dao } = await deployGovernance();
+    const preboundAmount = hre.ethers.parseEther("12");
+    await token.connect(deployer).getFunction("transfer")(
+      await dao.getAddress(),
+      preboundAmount,
+    );
+    await assert.rejects(
+      dao.connect(voter).getFunction("prebindTokens")(
+        recipient.address,
+        preboundAmount,
+      ),
+      /GovernorOnlyExecutor/,
+    );
+    await governCall(
+      dao,
+      voter,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("prebindTokens", [
+        recipient.address,
+        preboundAmount,
+      ]),
+    );
+    assert.equal(
+      await token.getFunction("balanceOf")(recipient.address),
+      preboundAmount,
+    );
+    assert.equal(
+      await token.getFunction("soulboundBalanceOf")(recipient.address),
+      preboundAmount,
+    );
+    assert.equal(
+      await token.getFunction("getVotes")(recipient.address),
+      preboundAmount,
+    );
+    assert.ok(
+      (await token.getFunction("soulboundSince")(recipient.address)) > 0n,
     );
   });
 
@@ -345,5 +389,58 @@ describe("MarketplaceDAO", () => {
       timelock.interface.encodeFunctionData("enableUpgrades"),
     );
     assert.equal(await timelock.upgradesEnabled(), true);
+
+    await assert.rejects(
+      dao.connect(deployer).getFunction("enableUpgrades")(),
+      /GovernorOnlyExecutor/,
+    );
+    await assert.rejects(
+      dao.getFunction("initialize")(
+        await token.getAddress(),
+        await timelock.getAddress(),
+        await tokenV2.getAddress(),
+      ),
+      /InvalidInitialization/,
+    );
+    await governCall(
+      dao,
+      voter,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("enableUpgrades"),
+    );
+    assert.equal(await dao.getFunction("upgradesEnabled")(), true);
+
+    const daoV2 = await (
+      await hre.ethers.getContractFactory("MarketplaceDAOV2Mock")
+    ).deploy(forwarderAddress);
+    await daoV2.waitForDeployment();
+    await governCall(
+      dao,
+      voter,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("upgradeToAndCall", [
+        await daoV2.getAddress(),
+        "0x",
+      ]),
+    );
+    const upgradedDAO = await hre.ethers.getContractAt(
+      "MarketplaceDAOV2Mock",
+      await dao.getAddress(),
+    );
+    assert.equal(await upgradedDAO.getFunction("implementationVersion")(), 2n);
+    await governCall(
+      dao,
+      voter,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("disableUpgradesPermanently"),
+    );
+    assert.equal(
+      await upgradedDAO.getFunction("upgradesPermanentlyDisabled")(),
+      true,
+    );
+    await assert.rejects(
+      upgradedDAO.connect(deployer).getFunction("enableUpgrades")(),
+      /GovernorOnlyExecutor/,
+    );
   });
 });

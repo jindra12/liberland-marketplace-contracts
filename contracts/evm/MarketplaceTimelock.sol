@@ -11,7 +11,9 @@ contract MarketplaceTimelock is
     TimelockControllerUpgradeable,
     UUPSUpgradeable
 {
+    /// @notice Whether DAO-approved self-execution currently permits implementation upgrades.
     bool public upgradesEnabled;
+    /// @notice Whether the DAO has permanently frozen this timelock's implementation.
     bool public upgradesPermanentlyDisabled;
 
     error TimelockSelfCallOnly();
@@ -19,10 +21,12 @@ contract MarketplaceTimelock is
     error TimelockUpgradesPermanentlyDisabled();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @notice Locks the implementation so initialization occurs only through a proxy.
     constructor() {
         _disableInitializers();
     }
 
+    /// @notice Initializes delay, governance roles, executor policy, and temporary admin.
     function initialize(
         uint256 minDelay,
         address[] memory proposers,
@@ -32,6 +36,7 @@ contract MarketplaceTimelock is
         __TimelockController_init(minDelay, proposers, executors, admin);
     }
 
+    /// @notice Enables an upgrade only when invoked by a scheduled operation targeting itself.
     function enableUpgrades() external {
         if (msg.sender != address(this)) revert TimelockSelfCallOnly();
         if (upgradesPermanentlyDisabled)
@@ -39,12 +44,14 @@ contract MarketplaceTimelock is
         upgradesEnabled = true;
     }
 
+    /// @notice Permanently freezes upgrades through a scheduled self-call.
     function disableUpgradesPermanently() external {
         if (msg.sender != address(this)) revert TimelockSelfCallOnly();
         upgradesEnabled = false;
         upgradesPermanentlyDisabled = true;
     }
 
+    /// @dev Requires both a prior upgrade enablement and timelock self-execution.
     function _authorizeUpgrade(address) internal view override {
         if (msg.sender != address(this)) revert TimelockSelfCallOnly();
         if (!upgradesEnabled) revert TimelockUpgradesDisabled();

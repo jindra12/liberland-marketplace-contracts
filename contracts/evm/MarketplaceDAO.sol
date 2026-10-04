@@ -31,18 +31,28 @@ contract MarketplaceDAO is
     ERC2771ContextUpgradeable,
     IMarketplaceDAO
 {
+    /// @notice Delay between proposal creation and the start of voting.
     uint48 public constant VOTING_DELAY = 1 days;
+    /// @notice Voting duration; the token's timestamp clock makes this a seconds value.
     uint32 public constant VOTING_PERIOD = 7 days;
+    /// @notice Minimum rooted-token votes required to submit a proposal.
     uint256 public constant PROPOSAL_THRESHOLD = 1 ether;
+    /// @notice Percentage of historical rooted-token supply required for quorum.
     uint256 public constant QUORUM_PERCENT = 4;
+    /// @notice Minimum time before successful Governor operations can execute.
     uint256 public constant TIMELOCK_DELAY = 2 days;
+    /// @notice Minimum continuous rooted period required for each reward claim.
     uint256 public constant CLAIM_PERIOD = 30 days;
 
     IMarketplaceToken private _marketplaceToken;
     MarketplaceLPToken private _rewardToken;
+    /// @notice Reward-token amount eligible rooted holders may claim each period.
     uint256 public rewardPerPeriod;
+    /// @notice Whether DAO governance may upgrade this implementation.
     bool public upgradesEnabled;
+    /// @notice Whether DAO governance has permanently frozen this implementation.
     bool public upgradesPermanentlyDisabled;
+    /// @notice Timestamp of each account's most recent successful reward claim.
     mapping(address => uint256) public lastClaimAt;
 
     error InvalidAddress();
@@ -59,12 +69,14 @@ contract MarketplaceDAO is
     event UpgradesPermanentlyDisabled();
 
     /// @custom:oz-upgrades-unsafe-allow constructor state-variable-immutable
+    /// @notice Locks the implementation and records the trusted meta-transaction forwarder.
     constructor(
         address trustedForwarder_
     ) ERC2771ContextUpgradeable(trustedForwarder_) {
         _disableInitializers();
     }
 
+    /// @notice Initializes Governor modules, its timelock, vote token, and reward-token proxy.
     function initialize(
         IMarketplaceToken token_,
         address timelockAddress,
@@ -101,21 +113,25 @@ contract MarketplaceDAO is
         );
     }
 
+    /// @notice Returns the DAO-deployed reward token used for rooted-holder incentives.
     function rewardToken() external view override returns (address) {
         return address(_rewardToken);
     }
 
+    /// @notice Sets the amount minted per eligible claim; callable only through DAO execution.
     function setRewardPerPeriod(uint256 amount) external onlyGovernance {
         rewardPerPeriod = amount;
         emit RewardPerPeriodUpdated(amount);
     }
 
+    /// @notice Sets underlying-token units paid per whole reward token through DAO execution.
     function setRedemptionRate(
         uint256 amountPerRewardToken
     ) external onlyGovernance {
         _rewardToken.setRedemptionRate(amountPerRewardToken);
     }
 
+    /// @notice Transfers underlying assets held by the DAO into the redemption reserve.
     function fundRewardReserve(uint256 amount) external onlyGovernance {
         if (!_marketplaceToken.transfer(address(_rewardToken), amount)) {
             revert InvalidAddress();
@@ -123,6 +139,7 @@ contract MarketplaceDAO is
         emit RewardReserveFunded(amount);
     }
 
+    /// @notice Transfers DAO-held tokens to an account and roots them in one governed action.
     function prebindTokens(
         address account,
         uint256 amount
@@ -133,6 +150,7 @@ contract MarketplaceDAO is
         _marketplaceToken.soulboundFor(account, amount);
     }
 
+    /// @notice Mints one period of rewards after 30 continuous days rooted and the claim interval.
     function claimReward() external override {
         address account = _msgSender();
         if (_marketplaceToken.soulboundBalanceOf(account) == 0)
@@ -154,6 +172,7 @@ contract MarketplaceDAO is
         emit RewardClaimed(account, rewardPerPeriod);
     }
 
+    /// @notice Enables DAO implementation upgrades unless permanently frozen.
     function enableUpgrades() external onlyGovernance {
         if (upgradesPermanentlyDisabled)
             revert UpgradesPermanentlyDisabledError();
@@ -161,6 +180,7 @@ contract MarketplaceDAO is
         emit UpgradesEnabled();
     }
 
+    /// @notice Permanently freezes future DAO implementation upgrades.
     function disableUpgradesPermanently() external onlyGovernance {
         if (upgradesPermanentlyDisabled || !upgradesEnabled)
             revert UpgradesAlreadyDisabled();
@@ -169,6 +189,7 @@ contract MarketplaceDAO is
         emit UpgradesPermanentlyDisabled();
     }
 
+    /// @notice Returns the configured delay before a proposal enters Active state.
     function votingDelay()
         public
         view
@@ -178,6 +199,7 @@ contract MarketplaceDAO is
         return super.votingDelay();
     }
 
+    /// @notice Returns the configured timestamp duration of a proposal's voting period.
     function votingPeriod()
         public
         view
@@ -187,6 +209,7 @@ contract MarketplaceDAO is
         return super.votingPeriod();
     }
 
+    /// @notice Returns the rooted voting power required to create a proposal.
     function proposalThreshold()
         public
         view
@@ -196,6 +219,7 @@ contract MarketplaceDAO is
         return super.proposalThreshold();
     }
 
+    /// @notice Returns a proposal's Governor state, including its timelock state.
     function state(
         uint256 proposalId
     )
@@ -207,6 +231,7 @@ contract MarketplaceDAO is
         return super.state(proposalId);
     }
 
+    /// @notice Reports whether a successful proposal must be queued in the timelock.
     function proposalNeedsQueuing(
         uint256 proposalId
     )
@@ -218,6 +243,7 @@ contract MarketplaceDAO is
         return super.proposalNeedsQueuing(proposalId);
     }
 
+    /// @dev Queues successful proposals in the configured timelock for its minimum delay.
     function _queueOperations(
         uint256 proposalId,
         address[] memory targets,
@@ -239,6 +265,7 @@ contract MarketplaceDAO is
             );
     }
 
+    /// @dev Executes queued proposal actions only through the timelock executor.
     function _executeOperations(
         uint256 proposalId,
         address[] memory targets,
@@ -258,6 +285,7 @@ contract MarketplaceDAO is
         );
     }
 
+    /// @dev Cancels Governor proposals and matching queued timelock operations.
     function _cancel(
         address[] memory targets,
         uint256[] memory values,
@@ -271,6 +299,7 @@ contract MarketplaceDAO is
         return super._cancel(targets, values, calldatas, descriptionHash);
     }
 
+    /// @dev Uses the timelock, not an EOA, as the Governor's privileged executor.
     function _executor()
         internal
         view
@@ -280,10 +309,12 @@ contract MarketplaceDAO is
         return super._executor();
     }
 
+    /// @dev Restricts DAO implementation upgrades to enabled timelock governance actions.
     function _authorizeUpgrade(address) internal override onlyGovernance {
         if (!upgradesEnabled) revert UpgradesDisabled();
     }
 
+    /// @dev Resolves the signer appended by the trusted ERC-2771 forwarder.
     function _msgSender()
         internal
         view
@@ -293,6 +324,7 @@ contract MarketplaceDAO is
         return ERC2771ContextUpgradeable._msgSender();
     }
 
+    /// @dev Removes the trusted-forwarder signer suffix from forwarded calldata.
     function _msgData()
         internal
         view
@@ -302,6 +334,7 @@ contract MarketplaceDAO is
         return ERC2771ContextUpgradeable._msgData();
     }
 
+    /// @dev Reports the ERC-2771 suffix length used by forwarded DAO calls.
     function _contextSuffixLength()
         internal
         view

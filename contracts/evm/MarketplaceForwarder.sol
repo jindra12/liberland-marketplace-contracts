@@ -5,5 +5,6 @@ import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.
 
 /// @notice OpenZeppelin ERC-2771 forwarder for signed, relayed user transactions.
 contract MarketplaceForwarder is ERC2771Forwarder {
+    /// @notice Deploys OpenZeppelin's EIP-712, nonce-protected ERC-2771 forwarder.
     constructor() ERC2771Forwarder("Liberland Marketplace Forwarder") {}
 }

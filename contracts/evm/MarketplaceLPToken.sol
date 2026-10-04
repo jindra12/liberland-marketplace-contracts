@@ -19,10 +19,15 @@ contract MarketplaceLPToken is
 {
     using SafeERC20 for IERC20;
 
+    /// @notice DAO contract authorized to mint, set redemption terms, and upgrade this token.
     address public dao;
+    /// @notice Underlying marketplace token paid out on redemption.
     IERC20 public redemptionToken;
+    /// @notice Underlying-token base units paid for one whole 18-decimal reward token.
     uint256 public redemptionRate;
+    /// @notice Whether DAO governance currently permits implementation upgrades.
     bool public upgradesEnabled;
+    /// @notice Whether DAO governance has permanently frozen implementation upgrades.
     bool public upgradesPermanentlyDisabled;
 
     error InvalidDAO();
@@ -46,12 +51,14 @@ contract MarketplaceLPToken is
     );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
+    /// @notice Locks the implementation and records the trusted meta-transaction forwarder.
     constructor(
         address trustedForwarder_
     ) ERC2771ContextUpgradeable(trustedForwarder_) {
         _disableInitializers();
     }
 
+    /// @notice Initializes the reward token and binds its DAO and redemption asset once.
     function initialize(
         address dao_,
         address redemptionToken_
@@ -64,15 +71,18 @@ contract MarketplaceLPToken is
         emit GovernanceUpdated(dao_);
     }
 
+    /// @notice Mints DAO-authorized rooted-holder rewards to an account.
     function mint(address account, uint256 amount) external onlyDAO {
         _mint(account, amount);
     }
 
+    /// @notice Sets the asset payout per whole reward token; zero pauses redemption.
     function setRedemptionRate(uint256 amountPerRewardToken) external onlyDAO {
         redemptionRate = amountPerRewardToken;
         emit RedemptionRateUpdated(amountPerRewardToken);
     }
 
+    /// @notice Burns caller reward tokens for reserve-backed underlying assets with slippage protection.
     function redeem(
         uint256 rewardAmount,
         uint256 minimumAssetAmount
@@ -81,6 +91,7 @@ contract MarketplaceLPToken is
         if (rewardAmount == 0 || redemptionRate == 0)
             revert InvalidRedemption();
         assetAmount = Math.mulDiv(rewardAmount, redemptionRate, 1 ether);
+        if (assetAmount == 0) revert InvalidRedemption();
         if (assetAmount < minimumAssetAmount)
             revert RedemptionSlippage(minimumAssetAmount, assetAmount);
         uint256 reserve = redemptionToken.balanceOf(address(this));
@@ -92,6 +103,7 @@ contract MarketplaceLPToken is
         emit TokensRedeemed(account, rewardAmount, assetAmount);
     }
 
+    /// @notice Enables implementation upgrades when the DAO has not frozen them permanently.
     function enableUpgrades() external onlyDAO {
         if (upgradesPermanentlyDisabled)
             revert UpgradesPermanentlyDisabledError();
@@ -99,6 +111,7 @@ contract MarketplaceLPToken is
         emit UpgradesEnabled();
     }
 
+    /// @notice Permanently freezes future implementation upgrades at DAO direction.
     function disableUpgradesPermanently() external onlyDAO {
         if (upgradesPermanentlyDisabled || !upgradesEnabled)
             revert UpgradesAlreadyDisabled();
@@ -107,15 +120,18 @@ contract MarketplaceLPToken is
         emit UpgradesPermanentlyDisabled();
     }
 
+    /// @dev Restricts implementation changes to an enabled DAO-authorized operation.
     function _authorizeUpgrade(address) internal view override onlyDAO {
         if (!upgradesEnabled) revert UpgradesDisabled();
     }
 
+    /// @dev Limits minting, redemption configuration, and upgrades to the DAO.
     modifier onlyDAO() {
         if (_msgSender() != dao) revert DAOOnly();
         _;
     }
 
+    /// @dev Resolves the signer appended by the trusted ERC-2771 forwarder.
     function _msgSender()
         internal
         view
@@ -125,6 +141,7 @@ contract MarketplaceLPToken is
         return ERC2771ContextUpgradeable._msgSender();
     }
 
+    /// @dev Removes the trusted-forwarder signer suffix from forwarded calldata.
     function _msgData()
         internal
         view
@@ -134,6 +151,7 @@ contract MarketplaceLPToken is
         return ERC2771ContextUpgradeable._msgData();
     }
 
+    /// @dev Reports the ERC-2771 suffix length used by forwarded calls.
     function _contextSuffixLength()
         internal
         view
