@@ -4,16 +4,29 @@ import hre from "hardhat";
 describe("MarketplaceV4SwapRouter", () => {
   const deployFixture = async () => {
     const [owner, trader] = await hre.ethers.getSigners();
+    const Forwarder = await hre.ethers.getContractFactory(
+      "MarketplaceForwarder",
+    );
+    const forwarder = await Forwarder.deploy();
+    await forwarder.waitForDeployment();
     const Token = await hre.ethers.getContractFactory("MarketplaceToken");
     const tokenIn = await hre.upgrades.deployProxy(
       Token,
       ["Input Token", "IN", owner.address, hre.ethers.parseEther("21000000")],
-      { kind: "uups", initializer: "initialize" },
+      {
+        kind: "uups",
+        initializer: "initialize",
+        constructorArgs: [await forwarder.getAddress()],
+      },
     );
     const tokenOut = await hre.upgrades.deployProxy(
       Token,
       ["Output Token", "OUT", owner.address, hre.ethers.parseEther("21000000")],
-      { kind: "uups", initializer: "initialize" },
+      {
+        kind: "uups",
+        initializer: "initialize",
+        constructorArgs: [await forwarder.getAddress()],
+      },
     );
     const PoolManager = await hre.ethers.getContractFactory("MockPoolManager");
     const poolManager = await PoolManager.deploy(hre.ethers.parseEther("90"));
@@ -26,6 +39,7 @@ describe("MarketplaceV4SwapRouter", () => {
       {
         kind: "uups",
         initializer: "initialize",
+        constructorArgs: [await forwarder.getAddress()],
       },
     );
 

@@ -1,4 +1,10 @@
 export { deployMarketplaceFromBrowser } from "./deployment/browser";
+export { deployMarketplaceOnTron } from "./deployment/tron";
+export type { BrowserTronDeploymentOptions } from "./deployment/tron";
+export { MarketplaceGasSponsor } from "./client/gasSponsorship";
+export { V4PositionClient } from "./client/v4Positions";
+export type { GaslessRequest } from "./client/gasSponsorship";
+export type { V4LiquidityChange, V4MintPosition } from "./client/v4Positions";
 export type {
   BrowserEvmDeploymentOptions,
   DeploymentArtifact,

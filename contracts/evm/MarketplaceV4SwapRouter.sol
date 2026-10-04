@@ -6,6 +6,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {
@@ -24,7 +26,8 @@ contract MarketplaceV4SwapRouter is
     Initializable,
     OwnableUpgradeable,
     UUPSUpgradeable,
-    IUnlockCallback
+    IUnlockCallback,
+    ERC2771ContextUpgradeable
 {
     using BalanceDeltaLibrary for BalanceDelta;
     using CurrencyLibrary for Currency;
@@ -54,6 +57,7 @@ contract MarketplaceV4SwapRouter is
     error InvalidGovernance();
     error InvalidFee();
     error FeeTransferFailed();
+    error GovernanceAlreadySet();
 
     event SwapExecuted(
         address indexed sender,
@@ -74,6 +78,13 @@ contract MarketplaceV4SwapRouter is
         uint128 amountOutMinimum;
         bytes hookData;
         address payer;
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor state-variable-immutable
+    constructor(
+        address trustedForwarder_
+    ) ERC2771ContextUpgradeable(trustedForwarder_) {
+        _disableInitializers();
     }
 
     function initialize(
@@ -105,7 +116,7 @@ contract MarketplaceV4SwapRouter is
             amountIn: amountIn,
             amountOutMinimum: amountOutMinimum,
             hookData: hookData,
-            payer: msg.sender
+            payer: _msgSender()
         });
 
         bytes memory result = poolManager.unlock(abi.encode(request));
@@ -157,8 +168,8 @@ contract MarketplaceV4SwapRouter is
     }
 
     function setGovernance(address governance_) external onlyOwner {
-        if (governance != address(0) || governance_ == address(0))
-            revert InvalidGovernance();
+        if (governance != address(0)) revert GovernanceAlreadySet();
+        if (governance_ == address(0)) revert InvalidGovernance();
         governance = governance_;
         emit GovernanceUpdated(governance_);
     }
@@ -231,8 +242,35 @@ contract MarketplaceV4SwapRouter is
     }
 
     modifier onlyGovernance() {
-        if (msg.sender != governance) revert GovernanceOnly();
+        if (_msgSender() != governance) revert GovernanceOnly();
         _;
+    }
+
+    function _msgSender()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (address)
+    {
+        return ERC2771ContextUpgradeable._msgSender();
+    }
+
+    function _msgData()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (bytes calldata)
+    {
+        return ERC2771ContextUpgradeable._msgData();
+    }
+
+    function _contextSuffixLength()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (uint256)
+    {
+        return ERC2771ContextUpgradeable._contextSuffixLength();
     }
 
     receive() external payable {}

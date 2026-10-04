@@ -17,9 +17,11 @@ export interface DeploymentArtifact {
 }
 
 export interface BrowserEvmDeploymentOptions {
-  chain: "ethereum" | "tron";
+  chain: "ethereum";
   network: string;
   poolManagerAddress: string;
+  positionManagerAddress: string;
+  permit2Address: string;
   tokenName: string;
   tokenSymbol: string;
   initialSupply?: bigint;
@@ -28,6 +30,8 @@ export interface BrowserEvmDeploymentOptions {
   swapArtifact: DeploymentArtifact;
   daoArtifact: DeploymentArtifact;
   rewardArtifact: DeploymentArtifact;
+  forwarderArtifact: DeploymentArtifact;
+  timelockArtifact: DeploymentArtifact;
   proxyArtifact: DeploymentArtifact;
   onTransaction?: (
     label: string,
@@ -50,8 +54,9 @@ const deploy = async (
   factory: ContractFactory,
   label: string,
   onTransaction?: BrowserEvmDeploymentOptions["onTransaction"],
+  constructorArgs: readonly unknown[] = [],
 ) => {
-  const contract = await factory.deploy();
+  const contract = await factory.deploy(...constructorArgs);
   await contract.waitForDeployment();
   await waitForTransaction(
     contract.deploymentTransaction(),
@@ -98,12 +103,30 @@ export const deployMarketplaceFromBrowser = async (
   }
   if (
     !options.poolManagerAddress ||
-    options.poolManagerAddress === "0x0000000000000000000000000000000000000000"
+    options.poolManagerAddress ===
+      "0x0000000000000000000000000000000000000000" ||
+    !options.positionManagerAddress ||
+    options.positionManagerAddress ===
+      "0x0000000000000000000000000000000000000000" ||
+    !options.permit2Address ||
+    options.permit2Address === "0x0000000000000000000000000000000000000000"
   ) {
-    throw new Error("A canonical V4 PoolManager address is required.");
+    throw new Error(
+      "V4 PoolManager, PositionManager, and Permit2 addresses are required.",
+    );
   }
   const initialSupply = options.initialSupply ?? DEFAULT_INITIAL_SUPPLY;
   const onTransaction = options.onTransaction;
+  const forwarder = await deploy(
+    new ContractFactory(
+      options.forwarderArtifact.abi,
+      options.forwarderArtifact.bytecode,
+      options.signer,
+    ),
+    "ERC-2771 forwarder",
+    onTransaction,
+  );
+  const forwarderAddress = await forwarder.getAddress();
 
   const tokenImplementation = await deploy(
     new ContractFactory(
@@ -113,6 +136,7 @@ export const deployMarketplaceFromBrowser = async (
     ),
     "token implementation",
     onTransaction,
+    [forwarderAddress],
   );
   const tokenInitialization = new Interface(
     options.tokenArtifact.abi,
@@ -143,6 +167,7 @@ export const deployMarketplaceFromBrowser = async (
     ),
     "swap implementation",
     onTransaction,
+    [forwarderAddress],
   );
   const swapInitialization = new Interface(
     options.swapArtifact.abi,
@@ -163,6 +188,31 @@ export const deployMarketplaceFromBrowser = async (
     ),
     "reward implementation",
     onTransaction,
+    [forwarderAddress],
+  );
+  const timelockImplementation = await deploy(
+    new ContractFactory(
+      options.timelockArtifact.abi,
+      options.timelockArtifact.bytecode,
+      options.signer,
+    ),
+    "timelock implementation",
+    onTransaction,
+  );
+  const timelockInitialization = new Interface(
+    options.timelockArtifact.abi,
+  ).encodeFunctionData("initialize", [
+    2 * 24 * 60 * 60,
+    [],
+    ["0x0000000000000000000000000000000000000000"],
+    deployer,
+  ]);
+  const timelock = await deployProxy(
+    proxyFactory,
+    await timelockImplementation.getAddress(),
+    timelockInitialization,
+    "timelock proxy",
+    onTransaction,
   );
   const daoImplementation = await deploy(
     new ContractFactory(
@@ -172,12 +222,14 @@ export const deployMarketplaceFromBrowser = async (
     ),
     "DAO implementation",
     onTransaction,
+    [forwarderAddress],
   );
+
   const daoInitialization = new Interface(
     options.daoArtifact.abi,
   ).encodeFunctionData("initialize", [
     await tokenProxy.getAddress(),
-    deployer,
+    await timelock.getAddress(),
     await rewardImplementation.getAddress(),
   ]);
   const daoProxy = await deployProxy(
@@ -211,6 +263,41 @@ export const deployMarketplaceFromBrowser = async (
     "swap governance",
     onTransaction,
   );
+  const timelockContract = new Contract(
+    await timelock.getAddress(),
+    options.timelockArtifact.abi,
+    options.signer,
+  );
+  const proposerRole = await timelockContract.getFunction("PROPOSER_ROLE")();
+  const cancellerRole = await timelockContract.getFunction("CANCELLER_ROLE")();
+  await waitForTransaction(
+    await timelockContract.getFunction("grantRole")(proposerRole, daoAddress),
+    "governor proposer role",
+    onTransaction,
+  );
+  await waitForTransaction(
+    await timelockContract.getFunction("grantRole")(cancellerRole, daoAddress),
+    "governor canceller role",
+    onTransaction,
+  );
+  await waitForTransaction(
+    await timelockContract.getFunction("renounceRole")(
+      await timelockContract.getFunction("DEFAULT_ADMIN_ROLE")(),
+      deployer,
+    ),
+    "timelock admin renunciation",
+    onTransaction,
+  );
+  await waitForTransaction(
+    await tokenContract.getFunction("transferOwnership")(daoAddress),
+    "token governance ownership",
+    onTransaction,
+  );
+  await waitForTransaction(
+    await swapContract.getFunction("transferOwnership")(daoAddress),
+    "swap governance ownership",
+    onTransaction,
+  );
 
   const daoContract = new Contract(
     daoAddress,
@@ -227,10 +314,12 @@ export const deployMarketplaceFromBrowser = async (
     deployedAt: new Date().toISOString(),
     deployer,
     implementations: {
+      forwarder: forwarderAddress,
       token: await tokenImplementation.getAddress(),
       dao: await daoImplementation.getAddress(),
       rewardToken: await rewardImplementation.getAddress(),
       swapRouter: await swapImplementation.getAddress(),
+      timelock: await timelockImplementation.getAddress(),
     },
     token: {
       address: await tokenProxy.getAddress(),
@@ -242,9 +331,12 @@ export const deployMarketplaceFromBrowser = async (
     swap: {
       address: await swapProxy.getAddress(),
       poolManager: options.poolManagerAddress,
+      positionManager: options.positionManagerAddress,
+      permit2: options.permit2Address,
     },
     dao: {
       address: daoAddress,
+      timelock: await timelock.getAddress(),
       rewardToken: String(rewardToken),
     },
   };

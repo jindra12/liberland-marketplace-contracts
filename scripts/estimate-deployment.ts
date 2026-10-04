@@ -110,6 +110,8 @@ const main = async (): Promise<void> => {
     hre.artifacts.readArtifact("MarketplaceV4SwapRouter"),
     hre.artifacts.readArtifact("MarketplaceDAO"),
     hre.artifacts.readArtifact("MarketplaceLPToken"),
+    hre.artifacts.readArtifact("MarketplaceForwarder"),
+    hre.artifacts.readArtifact("MarketplaceTimelock"),
     hre.artifacts.readArtifact("ERC1967ProxyDeployment"),
   ]);
   const [
@@ -117,6 +119,8 @@ const main = async (): Promise<void> => {
     swapArtifact,
     daoArtifact,
     rewardArtifact,
+    forwarderArtifact,
+    timelockArtifact,
     proxyArtifact,
   ] = artifacts;
   const PoolManager = await hre.ethers.getContractFactory("MockPoolManager");
@@ -128,6 +132,8 @@ const main = async (): Promise<void> => {
     chain: "ethereum",
     network: hre.network.name,
     poolManagerAddress: await poolManager.getAddress(),
+    positionManagerAddress: await poolManager.getAddress(),
+    permit2Address: await poolManager.getAddress(),
     tokenName: requiredEnvironment("TOKEN_NAME"),
     tokenSymbol: requiredEnvironment("TOKEN_SYMBOL"),
     initialSupply: parseUnits(
@@ -139,6 +145,8 @@ const main = async (): Promise<void> => {
     swapArtifact,
     daoArtifact,
     rewardArtifact,
+    forwarderArtifact,
+    timelockArtifact,
     proxyArtifact,
     onTransaction: (label, receipt) => {
       gasByStep.set(label, receipt.gasUsed);

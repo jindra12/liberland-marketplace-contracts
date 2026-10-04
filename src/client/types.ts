@@ -15,10 +15,12 @@ export interface DeploymentManifest {
   deployedAt: string;
   deployer: string;
   implementations: {
+    forwarder: string;
     token: string;
     dao: string;
     rewardToken: string;
     swapRouter: string;
+    timelock: string;
   };
   token: {
     address: string;
@@ -30,9 +32,12 @@ export interface DeploymentManifest {
   swap: {
     address: string;
     poolManager: string;
+    positionManager: string;
+    permit2: string;
   };
   dao: {
     address: string;
+    timelock: string;
     rewardToken: string;
   };
 }

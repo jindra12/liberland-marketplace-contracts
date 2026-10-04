@@ -1,223 +1,349 @@
 import assert from "node:assert/strict";
+import { id, ZeroAddress } from "ethers";
 import hre from "hardhat";
 
+const deployGovernance = async (
+  voterAmount = hre.ethers.parseEther("1000000"),
+  otherBoundAmount = 0n,
+) => {
+  const [deployer, voter, recipient] = await hre.ethers.getSigners();
+  const Forwarder = await hre.ethers.getContractFactory("MarketplaceForwarder");
+  const forwarder = await Forwarder.deploy();
+  await forwarder.waitForDeployment();
+  const forwarderAddress = await forwarder.getAddress();
+
+  const Token = await hre.ethers.getContractFactory("MarketplaceToken");
+  const token = await hre.upgrades.deployProxy(
+    Token,
+    [
+      "Marketplace Token",
+      "MKT",
+      deployer.address,
+      hre.ethers.parseEther("21000000"),
+    ],
+    {
+      kind: "uups",
+      initializer: "initialize",
+      constructorArgs: [forwarderAddress],
+    },
+  );
+
+  const Timelock = await hre.ethers.getContractFactory("MarketplaceTimelock");
+  const timelock = await hre.upgrades.deployProxy(
+    Timelock,
+    [2 * 24 * 60 * 60, [], [ZeroAddress], deployer.address],
+    { kind: "uups", initializer: "initialize" },
+  );
+
+  const LP = await hre.ethers.getContractFactory("MarketplaceLPToken");
+  const rewardImplementation = await LP.deploy(forwarderAddress);
+  await rewardImplementation.waitForDeployment();
+  const DAO = await hre.ethers.getContractFactory("MarketplaceDAO");
+  const dao = await hre.upgrades.deployProxy(
+    DAO,
+    [
+      await token.getAddress(),
+      await timelock.getAddress(),
+      await rewardImplementation.getAddress(),
+    ],
+    {
+      kind: "uups",
+      initializer: "initialize",
+      constructorArgs: [forwarderAddress],
+    },
+  );
+
+  const daoAddress = await dao.getAddress();
+  await token.setGovernance(daoAddress);
+  await token.transferOwnership(daoAddress);
+  await timelock.grantRole(await timelock.PROPOSER_ROLE(), daoAddress);
+  await timelock.grantRole(await timelock.CANCELLER_ROLE(), daoAddress);
+  await timelock.renounceRole(
+    await timelock.DEFAULT_ADMIN_ROLE(),
+    deployer.address,
+  );
+  await token.transfer(voter.address, voterAmount);
+  await token.connect(voter).getFunction("soulbound")(voterAmount);
+  if (otherBoundAmount > 0n) {
+    await token.transfer(recipient.address, otherBoundAmount);
+    await token.connect(recipient).getFunction("soulbound")(otherBoundAmount);
+  }
+  return {
+    deployer,
+    voter,
+    recipient,
+    token,
+    dao,
+    timelock,
+    forwarderAddress,
+  };
+};
+
+const governCall = async (
+  dao: Awaited<ReturnType<typeof deployGovernance>>["dao"],
+  voter: Awaited<ReturnType<typeof deployGovernance>>["voter"],
+  target: string,
+  data: string,
+) => {
+  const targets = [target];
+  const values = [0n];
+  const calldatas = [data];
+  const description = `Governance call ${data}`;
+  const descriptionHash = id(description);
+  const proposalId = await dao.hashProposal(
+    targets,
+    values,
+    calldatas,
+    descriptionHash,
+  );
+  await dao.connect(voter).getFunction("propose")(
+    targets,
+    values,
+    calldatas,
+    description,
+  );
+
+  await hre.network.provider.send("evm_increaseTime", [
+    Number(await dao.votingDelay()) + 1,
+  ]);
+  await hre.network.provider.send("evm_mine");
+  await dao.connect(voter).getFunction("castVote")(proposalId, 1);
+  await hre.network.provider.send("evm_increaseTime", [
+    Number(await dao.votingPeriod()) + 1,
+  ]);
+  await hre.network.provider.send("evm_mine");
+  await dao.queue(targets, values, calldatas, descriptionHash);
+  await hre.network.provider.send("evm_increaseTime", [2 * 24 * 60 * 60 + 1]);
+  await hre.network.provider.send("evm_mine");
+  await dao.execute(targets, values, calldatas, descriptionHash);
+};
+
 describe("MarketplaceDAO", () => {
-  const deployTokenAndDao = async () => {
-    const [owner, voter, recipient] = await hre.ethers.getSigners();
-    const Token = await hre.ethers.getContractFactory("MarketplaceToken");
-    const token = await hre.upgrades.deployProxy(
-      Token,
-      [
-        "Marketplace Token",
-        "MKT",
-        owner.address,
-        hre.ethers.parseEther("21000000"),
-      ],
-      { kind: "uups", initializer: "initialize" },
+  it("uses soulbound balances for votes and executes changes only through its timelock", async () => {
+    const { deployer, voter, recipient, token, dao, forwarderAddress } =
+      await deployGovernance();
+    assert.equal(await dao.quorumNumerator(), 4n);
+    assert.equal(
+      await token.getVotes(voter.address),
+      hre.ethers.parseEther("1000000"),
     );
-    const DAO = await hre.ethers.getContractFactory("MarketplaceDAO");
-    const LP = await hre.ethers.getContractFactory("MarketplaceLPToken");
-    const rewardImplementation = await LP.deploy();
-    await rewardImplementation.waitForDeployment();
-    const dao = await hre.upgrades.deployProxy(
-      DAO,
-      [
-        await token.getAddress(),
-        owner.address,
-        await rewardImplementation.getAddress(),
-      ],
-      { kind: "uups", initializer: "initialize" },
+    assert.equal(
+      await token.getVotes((await hre.ethers.getSigners())[0].address),
+      0n,
     );
-    await token.setGovernance(await dao.getAddress());
-    await token.transfer(voter.address, hre.ethers.parseEther("100"));
-    await token.connect(voter).getFunction("soulbound")(
-      hre.ethers.parseEther("100"),
-    );
-    return { owner, voter, recipient, token, dao };
-  };
 
-  const passProposal = async (
-    dao: Awaited<ReturnType<typeof deployTokenAndDao>>["dao"],
-    voter: Awaited<ReturnType<typeof deployTokenAndDao>>["voter"],
-    target: string,
-    data: string,
-  ) => {
-    await dao.connect(voter).getFunction("propose")(target, 0, data);
-    const id = (await dao.proposalCount()) - 1n;
-    await dao.connect(voter).getFunction("vote")(id, true);
-    await hre.network.provider.send("evm_increaseTime", [3 * 24 * 60 * 60 + 1]);
-    await hre.network.provider.send("evm_mine");
-    await dao.getFunction("execute")(id);
-  };
-
-  it("uses only soulbound balances as voting power and unbinds through DAO execution", async () => {
-    const { voter, token, dao } = await deployTokenAndDao();
     const amount = hre.ethers.parseEther("40");
-    await passProposal(
+    const unsoulboundData = token.interface.encodeFunctionData("unsoulbound", [
+      voter.address,
+      amount,
+    ]);
+    await governCall(
       dao,
       voter,
-      await token.getAddress(),
-      token.interface.encodeFunctionData("unsoulbound", [
-        voter.address,
-        amount,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("relay", [
+        await token.getAddress(),
+        0,
+        unsoulboundData,
       ]),
     );
-
     assert.equal(
       await token.soulboundBalanceOf(voter.address),
-      hre.ethers.parseEther("60"),
+      hre.ethers.parseEther("999960"),
     );
     await assert.rejects(
       token.connect(voter).getFunction("transfer")(
         voter.address,
-        hre.ethers.parseEther("61"),
+        hre.ethers.parseEther("41"),
       ),
       /InsufficientLiquidBalance/,
     );
-  });
+    await assert.rejects(
+      dao.connect(voter).getFunction("setRewardPerPeriod")(1),
+      /GovernorOnlyExecutor/,
+    );
 
-  it("lets the DAO set router fees and routes the fee to its recipient", async () => {
-    const { owner, voter, recipient, token, dao } = await deployTokenAndDao();
     const PoolManager = await hre.ethers.getContractFactory("MockPoolManager");
-    const poolManager = await PoolManager.deploy(hre.ethers.parseEther("90"));
+    const poolManager = await PoolManager.deploy(0);
     const Router = await hre.ethers.getContractFactory(
       "MarketplaceV4SwapRouter",
     );
     const router = await hre.upgrades.deployProxy(
       Router,
-      [await poolManager.getAddress(), owner.address],
-      { kind: "uups", initializer: "initialize" },
+      [await poolManager.getAddress(), deployer.address],
+      {
+        kind: "uups",
+        initializer: "initialize",
+        constructorArgs: [forwarderAddress],
+      },
     );
-    await router.setGovernance(await dao.getAddress());
-    await passProposal(
+    await router.getFunction("setGovernance")(await dao.getAddress());
+    await router.getFunction("transferOwnership")(await dao.getAddress());
+    const feeData = router.interface.encodeFunctionData("setFee", [
+      75,
+      recipient.address,
+    ]);
+    await governCall(
       dao,
       voter,
-      await router.getAddress(),
-      router.interface.encodeFunctionData("setFee", [100, recipient.address]),
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("relay", [
+        await router.getAddress(),
+        0,
+        feeData,
+      ]),
     );
-
-    await token.getFunction("transfer")(
-      voter.address,
-      hre.ethers.parseEther("100"),
-    );
-    const tokenOut = await hre.ethers.getContractFactory("MarketplaceToken");
-    const outputToken = await hre.upgrades.deployProxy(
-      tokenOut,
-      ["Output Token", "OUT", owner.address, hre.ethers.parseEther("21000000")],
-      { kind: "uups", initializer: "initialize" },
-    );
-    await outputToken.transfer(
-      await poolManager.getAddress(),
-      hre.ethers.parseEther("90"),
-    );
-    await token.connect(voter).getFunction("approve")(
-      await router.getAddress(),
-      hre.ethers.parseEther("100"),
-    );
-    const key = {
-      currency0: await token.getAddress(),
-      currency1: await outputToken.getAddress(),
-      fee: 3000,
-      tickSpacing: 60,
-      hooks: hre.ethers.ZeroAddress,
-    };
-    await router.connect(voter).getFunction("swapExactInputSingle")(
-      key,
-      true,
-      hre.ethers.parseEther("100"),
-      hre.ethers.parseEther("90"),
-      "0x",
-    );
-    assert.equal(
-      await token.balanceOf(recipient.address),
-      hre.ethers.parseEther("1"),
+    assert.equal(await router.getFunction("feeBps")(), 75n);
+    assert.equal(await router.getFunction("feeRecipient")(), recipient.address);
+    await assert.rejects(
+      router.connect(voter).getFunction("setFee")(10, recipient.address),
+      /GovernanceOnly/,
     );
   });
 
-  it("allows DAO-controlled reward configuration, pre-bound grants, and monthly claims", async () => {
-    const { voter, recipient, token, dao } = await deployTokenAndDao();
-    const reward = hre.ethers.parseEther("5");
-    await passProposal(
+  it("rejects proposals that fail the 4 percent quorum", async () => {
+    const { voter, dao } = await deployGovernance(
+      hre.ethers.parseEther("10000"),
+      hre.ethers.parseEther("1000000"),
+    );
+    const targets = [await dao.getAddress()];
+    const values = [0n];
+    const calldatas = [
+      dao.interface.encodeFunctionData("setRewardPerPeriod", [1]),
+    ];
+    const description = "Proposal below quorum";
+    const proposalId = await dao.hashProposal(
+      targets,
+      values,
+      calldatas,
+      id(description),
+    );
+    await dao.connect(voter).getFunction("propose")(
+      targets,
+      values,
+      calldatas,
+      description,
+    );
+    await hre.network.provider.send("evm_increaseTime", [
+      Number(await dao.votingDelay()) + 1,
+    ]);
+    await hre.network.provider.send("evm_mine");
+    await dao.connect(voter).getFunction("castVote")(proposalId, 1);
+    await hre.network.provider.send("evm_increaseTime", [
+      Number(await dao.votingPeriod()) + 1,
+    ]);
+    await hre.network.provider.send("evm_mine");
+    assert.equal(await dao.state(proposalId), 3n);
+  });
+
+  it("requires the full 30-day binding period, mints rewards, and redeems them for funded assets", async () => {
+    const { voter, recipient, token, dao } = await deployGovernance();
+    await assert.rejects(
+      dao.connect(voter).getFunction("claimReward")(),
+      /NothingToClaim/,
+    );
+    const rewardAmount = hre.ethers.parseEther("5");
+    const redeemRate = hre.ethers.parseEther("2");
+    await governCall(
       dao,
       voter,
       await dao.getAddress(),
-      dao.interface.encodeFunctionData("setRewardPerPeriod", [reward]),
+      dao.interface.encodeFunctionData("setRewardPerPeriod", [rewardAmount]),
     );
-    await token.getFunction("transfer")(
-      await dao.getAddress(),
-      hre.ethers.parseEther("25"),
-    );
-    await passProposal(
+    await governCall(
       dao,
       voter,
       await dao.getAddress(),
-      dao.interface.encodeFunctionData("prebindTokens", [
-        recipient.address,
-        hre.ethers.parseEther("25"),
-      ]),
+      dao.interface.encodeFunctionData("setRedemptionRate", [redeemRate]),
     );
-    assert.equal(
-      await token.soulboundBalanceOf(recipient.address),
-      hre.ethers.parseEther("25"),
+    const reserveAmount = hre.ethers.parseEther("100");
+    await token.transfer(await dao.getAddress(), reserveAmount);
+    await governCall(
+      dao,
+      voter,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("fundRewardReserve", [reserveAmount]),
     );
 
-    await dao.connect(recipient).getFunction("claimReward")();
-    const rewardToken = await hre.ethers.getContractAt(
-      "MarketplaceLPToken",
-      await dao.rewardToken(),
-    );
-    assert.equal(await rewardToken.balanceOf(recipient.address), reward);
-    const LPV2 = await hre.ethers.getContractFactory(
-      "MarketplaceLPTokenV2Mock",
-    );
-    const rewardImplementation = await LPV2.deploy();
-    await rewardImplementation.waitForDeployment();
-    await passProposal(
-      dao,
-      voter,
-      await rewardToken.getAddress(),
-      rewardToken.interface.encodeFunctionData("enableUpgrades"),
-    );
-    await passProposal(
-      dao,
-      voter,
-      await rewardToken.getAddress(),
-      rewardToken.interface.encodeFunctionData("upgradeToAndCall", [
-        await rewardImplementation.getAddress(),
-        "0x",
-      ]),
-    );
-    const upgradedReward = await hre.ethers.getContractAt(
-      "MarketplaceLPTokenV2Mock",
-      await rewardToken.getAddress(),
-    );
-    assert.equal(await upgradedReward.getFunction("version")(), 2n);
     await hre.network.provider.send("evm_increaseTime", [
       30 * 24 * 60 * 60 + 1,
     ]);
     await hre.network.provider.send("evm_mine");
-    await dao.connect(recipient).getFunction("claimReward")();
-  });
-
-  it("allows the administrative owner to upgrade the DAO proxy", async () => {
-    const { owner, dao } = await deployTokenAndDao();
-    const DAOV2 = await hre.ethers.getContractFactory("MarketplaceDAOV2Mock");
-    await dao.enableUpgrades();
-    const upgraded = await hre.upgrades.upgradeProxy(
-      await dao.getAddress(),
-      DAOV2.connect(owner),
+    await dao.connect(voter).getFunction("claimReward")();
+    const rewardToken = await hre.ethers.getContractAt(
+      "MarketplaceLPToken",
+      await dao.rewardToken(),
     );
-    assert.equal(await upgraded.getFunction("version")(), 2n);
-  });
+    await rewardToken.connect(voter).getFunction("redeem")(
+      rewardAmount,
+      hre.ethers.parseEther("10"),
+    );
+    assert.equal(await rewardToken.balanceOf(voter.address), 0n);
+    assert.equal(
+      await token.balanceOf(voter.address),
+      hre.ethers.parseEther("1000010"),
+    );
 
-  it("permanently freezes DAO upgrades when the owner disables them", async () => {
-    const { owner, dao } = await deployTokenAndDao();
-    const DAOV2 = await hre.ethers.getContractFactory("MarketplaceDAOV2Mock");
-    await dao.enableUpgrades();
-    await dao.disableUpgradesPermanently();
+    await token.transfer(recipient.address, 1n);
+    await token.connect(recipient).getFunction("soulbound")(1n);
     await assert.rejects(
-      hre.upgrades.upgradeProxy(await dao.getAddress(), DAOV2.connect(owner)),
-      /UpgradesDisabled/,
+      dao.connect(recipient).getFunction("claimReward")(),
+      /NothingToClaim/,
     );
+  });
+
+  it("blocks deployer-controlled governance and only upgrades by DAO execution", async () => {
+    const { deployer, voter, dao, token, timelock, forwarderAddress } =
+      await deployGovernance();
+    const tokenV2 = await (
+      await hre.ethers.getContractFactory("MarketplaceTokenV2Mock")
+    ).deploy(forwarderAddress);
+    await tokenV2.waitForDeployment();
+    await assert.rejects(
+      token.connect(deployer).getFunction("enableUpgrades")(),
+      /GovernanceOnly/,
+    );
+
+    const enableData = token.interface.encodeFunctionData("enableUpgrades");
+    await governCall(
+      dao,
+      voter,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("relay", [
+        await token.getAddress(),
+        0,
+        enableData,
+      ]),
+    );
+    const upgradeData = token.interface.encodeFunctionData("upgradeToAndCall", [
+      await tokenV2.getAddress(),
+      "0x",
+    ]);
+    await governCall(
+      dao,
+      voter,
+      await dao.getAddress(),
+      dao.interface.encodeFunctionData("relay", [
+        await token.getAddress(),
+        0,
+        upgradeData,
+      ]),
+    );
+    const upgradedToken = await hre.ethers.getContractAt(
+      "MarketplaceTokenV2Mock",
+      await token.getAddress(),
+    );
+    assert.equal(await upgradedToken.version(), 2n);
+    await assert.rejects(
+      timelock.connect(deployer).getFunction("enableUpgrades")(),
+      /TimelockSelfCallOnly/,
+    );
+    await governCall(
+      dao,
+      voter,
+      await timelock.getAddress(),
+      timelock.interface.encodeFunctionData("enableUpgrades"),
+    );
+    assert.equal(await timelock.upgradesEnabled(), true);
   });
 });

@@ -50,22 +50,38 @@ target must be tested independently before being advertised as supported.
 
 ## Current Implementation
 
-The first implementation contains:
+The current implementation contains:
 
 - `MarketplaceToken`, an upgradeable ERC-20 with EIP-2612 Permit, configurable name,
   symbol, and initial supply, defaulting to 21 million tokens with 18 decimals;
+- `MarketplaceDAO`, an OpenZeppelin Governor using checkpointed soulbound token voting,
+  a 4% quorum, a one-day voting delay, seven-day voting period, and a two-day timelock;
+- `MarketplaceTimelock`, a DAO-operated UUPS timelock. Its own upgrades can only be
+  authorized by a queued self-call, and can be permanently disabled through governance;
+- `MarketplaceLPToken`, a DAO-minted reward token with a configurable, reserve-backed
+  redemption path to the underlying marketplace token. Claims require 30 continuous
+  days of soulbound balance; removing the entire bound balance resets eligibility;
 - `MarketplaceV4SwapRouter`, an upgrade-safe exact-input single-hop adapter that uses
   the V4 `PoolManager.unlock` callback, settles the input currency, and takes the output;
-- configuration-driven EVM deployment through UUPS proxies; and
-- browser-compatible TypeScript orchestration for sequential implementation/proxy
-  deployment against a canonical V4 PoolManager; and
-- regression tests for supply ownership, upgrade gates, irreversible upgrade shutdown,
-  swap settlement, and minimum-output protection.
+- configuration-driven Ethereum and TRON deployment through UUPS proxies;
+- browser-compatible Ethereum and TronWeb deployment orchestration;
+- `MarketplaceGasSponsor`, an ERC-2771 typed-data client for a separately operated,
+  funded relayer; and
+- V4 position client operations for minting, reducing, collecting, and burning standard
+  Uniswap V4 NFT positions.
 
-The router deliberately does not reimplement V4 pool accounting. Pool creation,
-liquidity positions, and future DAO fee controls will use the V4 core/periphery boundary.
-V4 liquidity positions are position NFTs rather than V2-style fungible LP tokens; any
-fungible LP wrapper must be designed separately without weakening V4 position ownership.
+The router deliberately does not reimplement V4 pool accounting. V4 positions are
+standard PositionManager NFTs. The monthly `MarketplaceLPToken` reward is not a V4
+position share: it is a redeemable incentive token, backed by the redemption assets
+funded into its reserve. Governance must fund the reserve and set a nonzero redemption
+rate before users can redeem. TRON does not have canonical Uniswap V4 deployments, so
+TRON deployment requires compatible PoolManager, PositionManager, and Permit2 addresses
+to be supplied by the operator and independently validated on the target network.
+
+The ERC-2771 forwarder is deployed with the contracts, but gas sponsorship also requires
+an off-chain relayer that validates allowed targets/selectors and pays transaction gas.
+The library provides request signing/submission primitives; it does not operate or fund
+that relayer service.
 
 ## Commands
 
@@ -76,15 +92,16 @@ yarn test
 yarn typecheck
 ```
 
-Copy `.env.example` to an environment-specific configuration and select exactly one
-`DEPLOY_CHAIN` per deployment. The current deployment script supports EVM-compatible
-Ethereum/TRON targets. Never put private keys in the environment file committed to Git.
+Select exactly one `DEPLOY_CHAIN` per deployment. The console runner uses Hardhat's
+configured EVM signer for Ethereum, and `TRON_FULL_HOST`, `TRON_CHAIN_ID`, and
+`TRON_PRIVATE_KEY` for TRON. Never commit private keys or put them in tracked env files.
 
 ## Browser Deployment
 
-The browser-safe deployment API is exported from `src/deployment/browser.ts` and does not
-import Hardhat, Node filesystem APIs, environment access, or private keys. The website
-must inject a connected wallet signer and compiled ABI/bytecode artifacts:
+The Ethereum browser deployment API is exported from `src/deployment/browser.ts`; it
+accepts a connected EVM signer and compiled artifacts. The TRON browser API is exported
+from `src/deployment/tron.ts` and accepts the connected TronWeb instance. Both avoid
+reading secrets or environment variables:
 
 ```ts
 import { deployMarketplaceFromBrowser } from "@liberland/marketplace-contracts";
@@ -93,6 +110,8 @@ const manifest = await deployMarketplaceFromBrowser({
   chain: "ethereum",
   network: "sepolia",
   poolManagerAddress,
+  positionManagerAddress,
+  permit2Address,
   tokenName,
   tokenSymbol,
   initialSupply: 21_000_000n * 10n ** 18n,
@@ -101,16 +120,17 @@ const manifest = await deployMarketplaceFromBrowser({
   swapArtifact,
   daoArtifact,
   rewardArtifact,
+  forwarderArtifact,
+  timelockArtifact,
   proxyArtifact,
 });
 ```
 
-The deployment creates the DAO and its marketplace LP reward token, then assigns the
-DAO as governance for the token and swap router. The browser orchestrator submits the
-implementation and UUPS proxy deployments sequentially, using the canonical V4
-PoolManager supplied by the caller. UUPS is retained because it is the standardized
-upgradeable proxy option; EIP-1167 clones would be cheaper but permanently
-non-upgradeable.
+Deployment creates the forwarder, implementations, proxies, timelock and DAO; assigns
+DAO control to the token and swap router; grants the Governor proposer/canceller roles;
+and renounces the deployer's timelock admin role. The DAO is the only route for
+configuration and upgrade authorization. Ethereum must use the official chain-specific
+Uniswap V4 addresses; TRON requires compatible self-supplied infrastructure addresses.
 
 `scripts/deploy.ts` is only the console runner. It loads the same artifacts through
 Hardhat, calls the browser-safe function, and writes the resulting manifest to disk.

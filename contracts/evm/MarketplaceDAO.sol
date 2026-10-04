@@ -2,97 +2,97 @@
 pragma solidity ^0.8.24;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
+import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import {GovernorUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/GovernorUpgradeable.sol";
+import {GovernorSettingsUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorSettingsUpgradeable.sol";
+import {GovernorCountingSimpleUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorCountingSimpleUpgradeable.sol";
+import {GovernorVotesUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorVotesUpgradeable.sol";
+import {GovernorVotesQuorumFractionUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorVotesQuorumFractionUpgradeable.sol";
+import {GovernorTimelockControlUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorTimelockControlUpgradeable.sol";
+import {TimelockControllerUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IMarketplaceDAO} from "../shared/IMarketplaceDAO.sol";
 import {IMarketplaceToken} from "../shared/IMarketplaceToken.sol";
 import {MarketplaceLPToken} from "./MarketplaceLPToken.sol";
 
-/// @notice Upgradeable DAO for marketplace configuration and rooted-token governance.
+/// @notice OpenZeppelin Governor with soulbound-token voting and a timelocked executor.
 contract MarketplaceDAO is
     Initializable,
-    OwnableUpgradeable,
+    GovernorUpgradeable,
+    GovernorSettingsUpgradeable,
+    GovernorCountingSimpleUpgradeable,
+    GovernorVotesUpgradeable,
+    GovernorVotesQuorumFractionUpgradeable,
+    GovernorTimelockControlUpgradeable,
     UUPSUpgradeable,
+    ERC2771ContextUpgradeable,
     IMarketplaceDAO
 {
-    uint256 public constant VOTING_PERIOD = 3 days;
+    uint48 public constant VOTING_DELAY = 1 days;
+    uint32 public constant VOTING_PERIOD = 7 days;
+    uint256 public constant PROPOSAL_THRESHOLD = 1 ether;
+    uint256 public constant QUORUM_PERCENT = 4;
+    uint256 public constant TIMELOCK_DELAY = 2 days;
     uint256 public constant CLAIM_PERIOD = 30 days;
-    uint256 public constant MAX_FEE_BPS = 1_000;
 
-    IMarketplaceToken private _token;
+    IMarketplaceToken private _marketplaceToken;
     MarketplaceLPToken private _rewardToken;
+    uint256 public rewardPerPeriod;
     bool public upgradesEnabled;
     bool public upgradesPermanentlyDisabled;
-    uint256 public rewardPerPeriod;
-    uint256 public proposalCount;
-
-    struct Proposal {
-        address proposer;
-        address target;
-        uint256 value;
-        bytes data;
-        uint256 start;
-        uint256 end;
-        uint256 yesVotes;
-        uint256 noVotes;
-        bool executed;
-    }
-
-    mapping(uint256 => Proposal) public proposals;
-    mapping(uint256 => mapping(address => bool)) public hasVoted;
     mapping(address => uint256) public lastClaimAt;
 
     error InvalidAddress();
-    error NoVotingPower();
-    error ProposalNotActive();
-    error AlreadyVoted();
-    error ProposalNotPassed();
-    error AlreadyExecuted();
-    error CallFailed();
-    error NothingToClaim();
     error InvalidReward();
+    error NothingToClaim();
     error UpgradesDisabled();
     error UpgradesAlreadyDisabled();
     error UpgradesPermanentlyDisabledError();
 
-    event ProposalCreated(
-        uint256 indexed id,
-        address indexed proposer,
-        address target
-    );
-    event VoteCast(
-        uint256 indexed id,
-        address indexed voter,
-        bool support,
-        uint256 weight
-    );
-    event ProposalExecuted(uint256 indexed id);
     event RewardPerPeriodUpdated(uint256 amount);
     event RewardClaimed(address indexed account, uint256 amount);
+    event RewardReserveFunded(uint256 amount);
     event UpgradesEnabled();
     event UpgradesPermanentlyDisabled();
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    /// @custom:oz-upgrades-unsafe-allow constructor state-variable-immutable
+    constructor(
+        address trustedForwarder_
+    ) ERC2771ContextUpgradeable(trustedForwarder_) {
         _disableInitializers();
     }
 
     function initialize(
         IMarketplaceToken token_,
-        address initialOwner,
+        address timelockAddress,
         address rewardImplementation
     ) external initializer {
         if (
             address(token_) == address(0) ||
-            initialOwner == address(0) ||
+            timelockAddress == address(0) ||
             rewardImplementation == address(0)
         ) revert InvalidAddress();
-        __Ownable_init(initialOwner);
-        _token = token_;
+
+        _marketplaceToken = token_;
+        __Governor_init("Marketplace DAO");
+        __GovernorSettings_init(
+            VOTING_DELAY,
+            VOTING_PERIOD,
+            PROPOSAL_THRESHOLD
+        );
+        __GovernorCountingSimple_init();
+        __GovernorVotes_init(IVotes(address(token_)));
+        __GovernorVotesQuorumFraction_init(QUORUM_PERCENT);
+        __GovernorTimelockControl_init(
+            TimelockControllerUpgradeable(payable(timelockAddress))
+        );
+
         bytes memory rewardInitialization = abi.encodeCall(
             MarketplaceLPToken.initialize,
-            (address(this))
+            (address(this), address(token_))
         );
         _rewardToken = MarketplaceLPToken(
             address(
@@ -101,111 +101,67 @@ contract MarketplaceDAO is
         );
     }
 
-    function token() external view override returns (address) {
-        return address(_token);
-    }
-
     function rewardToken() external view override returns (address) {
         return address(_rewardToken);
     }
 
-    function propose(
-        address target,
-        uint256 value,
-        bytes calldata data
-    ) external override returns (uint256 id) {
-        if (target == address(0)) revert InvalidAddress();
-        if (_token.soulboundBalanceOf(msg.sender) == 0) revert NoVotingPower();
-        id = proposalCount++;
-        proposals[id] = Proposal({
-            proposer: msg.sender,
-            target: target,
-            value: value,
-            data: data,
-            start: block.timestamp,
-            end: block.timestamp + VOTING_PERIOD,
-            yesVotes: 0,
-            noVotes: 0,
-            executed: false
-        });
-        emit ProposalCreated(id, msg.sender, target);
-    }
-
-    function vote(uint256 id, bool support) external override {
-        Proposal storage proposal = proposals[id];
-        if (block.timestamp < proposal.start || block.timestamp >= proposal.end)
-            revert ProposalNotActive();
-        if (hasVoted[id][msg.sender]) revert AlreadyVoted();
-        uint256 weight = _token.soulboundBalanceOf(msg.sender);
-        if (weight == 0) revert NoVotingPower();
-        hasVoted[id][msg.sender] = true;
-        if (support) proposal.yesVotes += weight;
-        else proposal.noVotes += weight;
-        emit VoteCast(id, msg.sender, support, weight);
-    }
-
-    function execute(uint256 id) external payable override {
-        Proposal storage proposal = proposals[id];
-        if (proposal.executed) revert AlreadyExecuted();
-        if (
-            block.timestamp < proposal.end ||
-            proposal.yesVotes <= proposal.noVotes
-        ) revert ProposalNotPassed();
-        proposal.executed = true;
-        (bool success, ) = proposal.target.call{value: proposal.value}(
-            proposal.data
-        );
-        if (!success) revert CallFailed();
-        emit ProposalExecuted(id);
-    }
-
-    function setRewardPerPeriod(uint256 amount) external {
-        if (msg.sender != address(this)) revert CallFailed();
-        if (amount == 0) revert InvalidReward();
+    function setRewardPerPeriod(uint256 amount) external onlyGovernance {
         rewardPerPeriod = amount;
         emit RewardPerPeriodUpdated(amount);
     }
 
+    function setRedemptionRate(
+        uint256 amountPerRewardToken
+    ) external onlyGovernance {
+        _rewardToken.setRedemptionRate(amountPerRewardToken);
+    }
+
+    function fundRewardReserve(uint256 amount) external onlyGovernance {
+        if (!_marketplaceToken.transfer(address(_rewardToken), amount)) {
+            revert InvalidAddress();
+        }
+        emit RewardReserveFunded(amount);
+    }
+
+    function prebindTokens(
+        address account,
+        uint256 amount
+    ) external onlyGovernance {
+        if (account == address(0) || amount == 0) revert InvalidAddress();
+        if (!_marketplaceToken.transfer(account, amount))
+            revert InvalidAddress();
+        _marketplaceToken.soulboundFor(account, amount);
+    }
+
     function claimReward() external override {
-        if (_token.soulboundBalanceOf(msg.sender) == 0) revert NoVotingPower();
+        address account = _msgSender();
+        if (_marketplaceToken.soulboundBalanceOf(account) == 0)
+            revert NothingToClaim();
+
+        uint256 boundSince = _marketplaceToken.soulboundSince(account);
+        uint256 eligibleSince =
+            lastClaimAt[account] > boundSince
+                ? lastClaimAt[account]
+                : boundSince;
         if (
             rewardPerPeriod == 0 ||
-            block.timestamp < lastClaimAt[msg.sender] + CLAIM_PERIOD
+            eligibleSince == 0 ||
+            block.timestamp < eligibleSince + CLAIM_PERIOD
         ) revert NothingToClaim();
-        lastClaimAt[msg.sender] = block.timestamp;
-        _rewardToken.mint(msg.sender, rewardPerPeriod);
-        emit RewardClaimed(msg.sender, rewardPerPeriod);
+
+        lastClaimAt[account] = block.timestamp;
+        _rewardToken.mint(account, rewardPerPeriod);
+        emit RewardClaimed(account, rewardPerPeriod);
     }
 
-    function prebindTokens(address account, uint256 amount) external {
-        if (msg.sender != address(this)) revert CallFailed();
-        if (account == address(0) || amount == 0) revert InvalidAddress();
-        if (!_token.transfer(account, amount)) revert CallFailed();
-        _token.soulboundFor(account, amount);
-    }
-
-    function transferTreasury(address recipient, uint256 amount) external {
-        if (msg.sender != address(this) || recipient == address(0))
-            revert InvalidAddress();
-        if (!_token.transfer(recipient, amount)) revert CallFailed();
-    }
-
-    function isProposalPassed(uint256 id) external view returns (bool) {
-        Proposal memory proposal = proposals[id];
-        return
-            block.timestamp >= proposal.end &&
-            proposal.yesVotes > proposal.noVotes &&
-            !proposal.executed;
-    }
-
-    function enableUpgrades() external onlyOwner {
+    function enableUpgrades() external onlyGovernance {
         if (upgradesPermanentlyDisabled)
             revert UpgradesPermanentlyDisabledError();
         upgradesEnabled = true;
         emit UpgradesEnabled();
     }
 
-    function disableUpgradesPermanently() external onlyOwner {
+    function disableUpgradesPermanently() external onlyGovernance {
         if (upgradesPermanentlyDisabled || !upgradesEnabled)
             revert UpgradesAlreadyDisabled();
         upgradesEnabled = false;
@@ -213,7 +169,145 @@ contract MarketplaceDAO is
         emit UpgradesPermanentlyDisabled();
     }
 
-    function _authorizeUpgrade(address) internal override onlyOwner {
+    function votingDelay()
+        public
+        view
+        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
+        returns (uint256)
+    {
+        return super.votingDelay();
+    }
+
+    function votingPeriod()
+        public
+        view
+        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
+        returns (uint256)
+    {
+        return super.votingPeriod();
+    }
+
+    function proposalThreshold()
+        public
+        view
+        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
+        returns (uint256)
+    {
+        return super.proposalThreshold();
+    }
+
+    function state(
+        uint256 proposalId
+    )
+        public
+        view
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+        returns (ProposalState)
+    {
+        return super.state(proposalId);
+    }
+
+    function proposalNeedsQueuing(
+        uint256 proposalId
+    )
+        public
+        view
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+        returns (bool)
+    {
+        return super.proposalNeedsQueuing(proposalId);
+    }
+
+    function _queueOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    )
+        internal
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+        returns (uint48)
+    {
+        return
+            super._queueOperations(
+                proposalId,
+                targets,
+                values,
+                calldatas,
+                descriptionHash
+            );
+    }
+
+    function _executeOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    )
+        internal
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+    {
+        super._executeOperations(
+            proposalId,
+            targets,
+            values,
+            calldatas,
+            descriptionHash
+        );
+    }
+
+    function _cancel(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    )
+        internal
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+        returns (uint256)
+    {
+        return super._cancel(targets, values, calldatas, descriptionHash);
+    }
+
+    function _executor()
+        internal
+        view
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+        returns (address)
+    {
+        return super._executor();
+    }
+
+    function _authorizeUpgrade(address) internal override onlyGovernance {
         if (!upgradesEnabled) revert UpgradesDisabled();
+    }
+
+    function _msgSender()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (address)
+    {
+        return ERC2771ContextUpgradeable._msgSender();
+    }
+
+    function _msgData()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (bytes calldata)
+    {
+        return ERC2771ContextUpgradeable._msgData();
+    }
+
+    function _contextSuffixLength()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (uint256)
+    {
+        return ERC2771ContextUpgradeable._contextSuffixLength();
     }
 }

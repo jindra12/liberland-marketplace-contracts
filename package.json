@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./deployment/browser": "./src/deployment/browser.ts",
+    "./deployment/tron": "./src/deployment/tron.ts",
     "./client/ethereum": "./src/client/ethereum.ts",
     "./client/thirdweb": "./src/client/thirdweb.ts",
     "./client/tron": "./src/client/tron.ts"

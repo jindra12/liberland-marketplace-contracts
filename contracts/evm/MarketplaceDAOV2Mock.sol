@@ -5,7 +5,9 @@ import {MarketplaceDAO} from "./MarketplaceDAO.sol";
 
 /// @custom:oz-upgrades-unsafe-allow missing-initializer
 contract MarketplaceDAOV2Mock is MarketplaceDAO {
-    function version() external pure returns (uint256) {
+    constructor(address trustedForwarder_) MarketplaceDAO(trustedForwarder_) {}
+
+    function implementationVersion() external pure returns (uint256) {
         return 2;
     }
 }
