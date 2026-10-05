@@ -153,4 +153,39 @@ The script loads `REACT_APP_THIRDWEB` from the shell first and then from the par
 frontend `.env` file. It does not print the credential. `TOKEN_NAME` and
 `TOKEN_SYMBOL` describe the locally simulated deployment and do not affect mainnet.
 
+### Browser integration
+
+`@liberland/marketplace-contracts/deployment/networks` owns the supported Ethereum
+mainnet and Sepolia network configurations, including canonical V4 infrastructure.
+It also includes a localhost mainnet fork at `http://127.0.0.1:8545`, chain ID `31337`,
+with mainnet's V4 addresses. Start it from the parent repository:
+
+```bash
+yarn workspace @liberland/marketplace-contracts fork:local
+```
+
+The runner uses the existing `REACT_APP_THIRDWEB` value from the parent's `.env` or
+shell environment and forks the latest mainnet block when started. Hardhat provides
+20 funded development accounts. Never use these public development keys on mainnet.
+Select **Local Ethereum mainnet fork** in the deployment form. If the browser runs
+on your desktop while this repository runs over SSH, tunnel port 8545 to your desktop.
+Local chain state is reset when the fork node restarts, unlike deployed mainnet contracts.
+
+Applications select a configuration by key; ordinary users should never need to type
+chain IDs, PoolManager, PositionManager, or Permit2 addresses.
+
+`yarn build` compiles Solidity and runs `export:artifacts`. The generated browser
+artifact bundle contains the compiled ABIs and deployment bytecode without importing
+Hardhat or filesystem code at runtime.
+
+`VentureClient` accepts an ethers provider or signer and offers account reads, rooting,
+delegation, liquid transfers, reward claims, and reserve-backed redemption. It waits
+for successful receipts before reporting a transaction as confirmed. Privileged DAO
+configuration is not exposed as an ordinary account action.
+
+The parent app currently exposes Ethereum deployment and these account actions.
+TRON's library deployment helper exists, but a browser TRON deployment flow and
+validated TVM-compatible infrastructure/artifacts are not yet integrated. Ethereum
+configuration must not be reused for TRON.
+
 See [`AGENTS.md`](AGENTS.md) for mandatory engineering and security rules.

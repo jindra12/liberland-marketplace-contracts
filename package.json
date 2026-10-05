@@ -7,19 +7,24 @@
   "exports": {
     ".": "./src/index.ts",
     "./deployment/browser": "./src/deployment/browser.ts",
+    "./deployment/artifacts": "./src/deployment/artifacts.ts",
+    "./deployment/networks": "./src/deployment/networks.ts",
     "./deployment/tron": "./src/deployment/tron.ts",
     "./client/ethereum": "./src/client/ethereum.ts",
+    "./client/venture": "./src/client/venture.ts",
     "./client/thirdweb": "./src/client/thirdweb.ts",
     "./client/tron": "./src/client/tron.ts"
   },
   "scripts": {
-    "build": "hardhat compile",
+    "build": "hardhat compile && yarn export:artifacts",
+    "export:artifacts": "tsx scripts/export-browser-artifacts.ts",
     "compile:solidity": "tsx scripts/compile-solidity.ts",
     "test": "hardhat test",
     "estimate:deployment": "tsx scripts/estimate-deployment.ts",
     "format": "prettier --write \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
     "format:check": "prettier --check \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
     "deploy": "tsx scripts/deploy.ts",
+    "fork:local": "tsx scripts/start-local-fork.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

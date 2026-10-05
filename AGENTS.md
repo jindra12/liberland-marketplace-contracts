@@ -64,6 +64,165 @@ The supported targets are:
 - Keep deployment logic deterministic and idempotent where possible. Record chain ID,
   deployment version, proxy addresses, implementation addresses, and transaction IDs.
 
+## Frontend Contract Function Inventory
+
+Treat this as the frontend integration checklist for the library. Keep the TypeScript
+client API aligned with the deployed ABI and the actual capabilities of each chain. A
+listed contract operation is not automatically available on every chain: mark it as
+unsupported rather than silently routing it through an incompatible adapter.
+
+### Existing package APIs
+
+The package currently exports these frontend-callable APIs:
+
+- `deployMarketplaceFromBrowser(options)`: deploys Ethereum implementations and proxies,
+  initializes and wires token, DAO, reward token, swap router, timelock, and forwarder,
+  reports transaction receipts through `onTransaction`, and returns a `DeploymentManifest`.
+- `deployMarketplaceOnTron(options)`: performs the analogous deployment and wiring with
+  TronWeb, waits for confirmations, reports transaction IDs, and returns a manifest.
+- `EvmTokenClient.balanceOf(owner)`, `transfer(recipient, amount)`,
+  `approve(spender, amount)`, and `permit(owner, spender, amount, deadline)`.
+- `ThirdwebTokenClient.balanceOf(owner)`, `transfer(recipient, amount)`, and
+  `approve(spender, amount)`.
+- `TronTokenClient.balanceOf(owner)`, `transfer(recipient, amount)`, and
+  `approve(spender, amount)`.
+- `MarketplaceGasSponsor.signRequest(target, data, gas, deadline, signer, value?)` and
+  `submit(request, relayer)`: Ethereum ERC-2771 signing and forwarding primitives. The
+  separate relayer service, its allowlist, funding, and monitoring are not provided.
+- `V4PositionClient.approveCurrency(token, amount, expiration)`,
+  `mintPosition(request)`, `decreaseLiquidity(request)`, `collectFees(request)`,
+  `burnEmptyPosition(tokenId, poolKey, deadline, hookData?)`, and
+  `getPositionLiquidity(tokenId)`.
+
+Keep these exports and their types documented when changed. Add typed client methods
+instead of making application components construct ABI strings, encode calldata, or
+duplicate chain-specific transaction handling.
+
+### Wallet and network operations the frontend must support
+
+- Connect/disconnect a wallet using the host application's wallet integration; this
+  package consumes an already-connected `Signer`, Thirdweb `Account`, or `TronWeb`.
+- Read the active account and network/chain ID, validate that they match the selected
+  deployment manifest, and request a supported-network switch where the wallet allows it.
+- Read token/native-currency balances and estimate/submit transactions using the chosen
+  wallet. Show pending, confirmed, rejected, and reverted transaction states.
+- Select a deployment manifest by chain and network; never infer an address from another
+  chain or treat implementation addresses as user-facing proxy addresses.
+- Display transaction hashes/IDs, confirmations, and links to the correct chain explorer.
+
+### Marketplace token operations
+
+Frontend clients and UI must be able to:
+
+- Read `name`, `symbol`, `decimals`, `totalSupply`, `balanceOf`, `allowance`, `owner`,
+  `governance`, `trustedForwarder`, `soulboundBalanceOf`, `liquidBalanceOf`, and
+  `soulboundSince`.
+- Transfer liquid tokens with `transfer`, approve spenders with `approve`, and use
+  `transferFrom` only where the connected account has an explicit allowance.
+- Create a gasless allowance with EIP-2612 `permit`, reading `nonces` and the EIP-712
+  domain from the active token/network; handle expiry, signature rejection, and nonce
+  changes. `ThirdwebTokenClient` and `TronTokenClient` do not currently implement permit.
+- Root the caller's liquid balance with `soulbound(amount)`. Show liquid and rooted
+  balances separately, explain that rooted units cannot be transferred, and show the
+  current continuous-root timestamp used for reward eligibility.
+- Read timestamp vote data using `clock`, `CLOCK_MODE`, `getVotes`, `getPastVotes`, and
+  `getPastTotalSupply`; choose a delegate with `delegate` or `delegateBySig`.
+- Explain that `soulboundFor`, `unsoulbound`, governance assignment, and upgrade controls
+  are privileged operations and are not ordinary user actions.
+
+### DAO and proposal operations
+
+Provide frontend-readable typed operations for the OpenZeppelin Governor ABI, not just
+the custom helper methods. The frontend needs to:
+
+- Read DAO identity and configuration: `name`, `version`, `token`, `timelock`,
+  `rewardToken`, `rewardPerPeriod`, `lastClaimAt`, `votingDelay`, `votingPeriod`,
+  `proposalThreshold`, `quorum`, `quorumNumerator`, `quorumDenominator`, and
+  `proposalNeedsQueuing`.
+- Discover proposals and render their proposer, description, proposal ID, snapshot,
+  deadline, ETA, state, quorum, and for/against/abstain totals using `hashProposal`,
+  `state`, `proposalProposer`, `proposalSnapshot`, `proposalDeadline`, `proposalEta`,
+  `proposalVotes`, `hasVoted`, and `getVotes` / `getVotesWithParams`.
+- Create proposals with `propose`; vote with `castVote`, `castVoteWithReason`,
+  `castVoteWithReasonAndParams`, or the corresponding `...BySig` methods when supported
+  by the wallet; queue successful proposals with `queue`; execute ready proposals with
+  `execute`; and present `cancel` only when the connected account is authorized by the
+  Governor's proposal-cancellation rules.
+- Encode governed calls for `setRewardPerPeriod`, `setRedemptionRate`,
+  `fundRewardReserve`, `prebindTokens`, upgrade enable/freeze operations, and applicable
+  OpenZeppelin Governor settings updates. These calls must be submitted as proposals and
+  executed through the timelock; never expose them as direct admin transactions.
+- Support `relay` for governance execution against controlled contracts where required,
+  while targeting Governor `onlyGovernance` methods directly through the timelock.
+- Report proposal lifecycle transitions accurately. A passed vote is not executable
+  until any required timelock delay has elapsed.
+
+### Rooted-holder rewards and LP reward token
+
+- Read the DAO reward-token address and configuration, the account's rooted balance,
+  `soulboundSince`, `lastClaimAt`, and the `CLAIM_PERIOD` before showing eligibility.
+- Let eligible users call `claimReward`; show the transaction outcome and newly minted
+  reward-token balance. Explain that claims require a continuous 30-day rooted period
+  and another full period after each successful claim.
+- Read reward-token `name`, `symbol`, `decimals`, `totalSupply`, `balanceOf`, `dao`,
+  `redemptionToken`, and `redemptionRate`.
+- Show the reserve-backed redemption estimate and let the holder call `redeem(rewardAmount,
+  minimumAssetAmount)` with an explicit slippage/minimum-payout value. Display reserve
+  insufficiency, zero-rate, rounding-to-zero, and slippage errors as actionable failures.
+- Governance-only `mint`, `setRedemptionRate`, `enableUpgrades`, and
+  `disableUpgradesPermanently` must not be offered as ordinary user controls.
+
+### V4 swap and liquidity-position operations
+
+- For swaps, read the configured router, PoolManager and DAO fee settings; select a valid
+  `PoolKeyInput`; obtain a quote from a trusted V4 quoter/pool source; compute and show
+  slippage-protected `amountOutMinimum`; then call `swapExactInputSingle` with the proper
+  direction, hook data, and exact native value when the input currency is native.
+- Show the router fee (`feeBps`) and recipient, input/output amounts, output minimum,
+  transaction state, and the `SwapExecuted` result. Never imply that this router supplies
+  quotes or discovers pools: the current `SwapClient` interface has no implementation.
+- Approve ERC-20 currency to Permit2 and Permit2 to the PositionManager through
+  `V4PositionClient.approveCurrency`; surface both transaction states and do not proceed
+  to mint until the required approvals are confirmed.
+- Support V4 position minting with pool key, tick range, liquidity, maximum token amounts,
+  recipient, hook data, and deadline; return/display the minted NFT token ID.
+- Support liquidity decrease/withdrawal with minimum amount limits, fee collection, and
+  burning an empty position. Read position liquidity and verify NFT ownership before
+  offering owner-only actions.
+- A V4 position is a standard PositionManager NFT. It is distinct from the monthly
+  `MarketplaceLPToken` reward and must be displayed and described separately.
+
+### Timelock, ownership, and upgrade operations
+
+- For authorized governance/admin views, read timelock roles, role admins, minimum delay,
+  operation hash/state/timestamp, and readiness/completion using `hasRole`, `getRoleAdmin`,
+  `getMinDelay`, `hashOperation`, `hashOperationBatch`, `getOperationState`,
+  `getTimestamp`, `isOperation*`, `schedule`, `scheduleBatch`, `execute`, `executeBatch`,
+  `cancel`, `grantRole`, `revokeRole`, `renounceRole`, and `updateDelay` as appropriate.
+- Treat role-management and timelock scheduling/execution as governance operations. Do
+  not present a deployer/admin key as a bypass after deployment has renounced that role.
+- Display upgrade state (`upgradesEnabled`, `upgradesPermanentlyDisabled`) but never
+  expose `upgradeToAndCall` as a user action. Upgrade enablement and implementation
+  changes require the documented DAO/timelock path; permanent freezes cannot be undone.
+
+### Chain-specific support boundaries and future client work
+
+- Ethereum contract deployments support the EVM token adapter, Thirdweb token adapter,
+  ERC-2771 sponsor helper, browser deployment, DAO/timelock contracts, swap router, and
+  V4 position client, subject to configured compatible V4 infrastructure. Typed DAO and
+  swap adapters are still future client work; do not imply they are already implemented.
+- TRON currently provides browser deployment and basic token balance/transfer/approval
+  through TronWeb. Do not claim the EVM gas-sponsor helper, EIP-2612 permit, DAO client,
+  V4 swap router, or V4 positions work on TRON without deployed compatible contracts,
+  chain-specific transaction tests, and client implementations.
+- Add typed `DaoClient`, `RewardTokenClient`, and `SwapClient` implementations when the
+  frontend begins using those operations. The `SwapClient` interface is currently only a
+  type contract, not an implementation. Ensure Thirdweb and standard ethers signers can
+  invoke the same supported EVM behavior without duplicate calldata logic.
+- Any new frontend workflow must be represented by a typed library operation, declared
+  chain support, authorization requirements, expected events/results, and normal plus
+  adversarial tests. Update this inventory and the README in the same change.
+
 ## Repository and Integration Rules
 
 - This repository has its own minimal dependencies and is included as a submodule of the

@@ -1,5 +1,16 @@
 export type SupportedChain = "ethereum" | "tron";
 
+export interface DeploymentNetworkConfiguration {
+  label: string;
+  chain: "ethereum";
+  chainId: number;
+  network: string;
+  rpcUrl?: string;
+  poolManagerAddress: string;
+  positionManagerAddress: string;
+  permit2Address: string;
+}
+
 export interface PoolKeyInput {
   currency0: string;
   currency1: string;

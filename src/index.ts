@@ -3,6 +3,8 @@ export { deployMarketplaceOnTron } from "./deployment/tron";
 export type { BrowserTronDeploymentOptions } from "./deployment/tron";
 export { MarketplaceGasSponsor } from "./client/gasSponsorship";
 export { V4PositionClient } from "./client/v4Positions";
+export { VentureClient } from "./client/venture";
+export type { VentureAccountSnapshot } from "./client/venture";
 export type { GaslessRequest } from "./client/gasSponsorship";
 export type { V4LiquidityChange, V4MintPosition } from "./client/v4Positions";
 export type {
