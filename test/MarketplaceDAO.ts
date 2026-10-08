@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { id, ZeroAddress } from "ethers";
 import hre from "hardhat";
+import { MarketplaceDaoClient } from "../src/client/governance";
 
 const deployGovernance = async (
   voterAmount = hre.ethers.parseEther("1000000"),
@@ -119,6 +120,83 @@ const governCall = async (
 };
 
 describe("MarketplaceDAO", () => {
+  it("creates, discovers, votes, queues and executes through the typed DAO client", async () => {
+    const { voter, dao, token } = await deployGovernance();
+    const addresses = {
+      dao: await dao.getAddress(),
+      token: await token.getAddress(),
+      router: ZeroAddress,
+    };
+    const client = new MarketplaceDaoClient(addresses, voter);
+    await hre.network.provider.send("evm_mine");
+    await client.propose({
+      kind: "reward",
+      amount: hre.ethers.parseEther("5"),
+      description: "Five reward tokens per month",
+    });
+    let proposal = (await client.listProposals(voter.address)).items[0];
+    assert.equal(proposal.state, 0);
+    assert.equal(proposal.quorumIsProjected, true);
+    await hre.network.provider.send("evm_increaseTime", [
+      Number(await dao.votingDelay()) + 1,
+    ]);
+    await hre.network.provider.send("evm_mine");
+    proposal = (await client.listProposals(voter.address)).items[0];
+    assert.equal(proposal.state, 1);
+    assert.equal(proposal.votingPower, hre.ethers.parseEther("1000000"));
+    await client.vote(proposal.id, 1, "Funded reserves make this appropriate");
+    await assert.rejects(
+      client.vote(proposal.id, 1, "Duplicate"),
+      /GovernorAlreadyCastVote/,
+    );
+    assert.equal(
+      (await client.listProposals(voter.address)).items[0].hasVoted,
+      true,
+    );
+    await hre.network.provider.send("evm_increaseTime", [
+      Number(await dao.votingPeriod()) + 1,
+    ]);
+    await hre.network.provider.send("evm_mine");
+    await client.queue(proposal);
+    await assert.rejects(
+      client.execute(proposal),
+      /TimelockUnexpectedOperationState/,
+    );
+    await hre.network.provider.send("evm_increaseTime", [2 * 24 * 60 * 60 + 1]);
+    await hre.network.provider.send("evm_mine");
+    await client.execute(proposal);
+    assert.equal(await dao.rewardPerPeriod(), hre.ethers.parseEther("5"));
+  });
+
+  it("rejects invalid proposals and Mallory's unsupported vote or insufficient proposal power", async () => {
+    const { recipient: mallory, dao, token } = await deployGovernance();
+    const client = new MarketplaceDaoClient(
+      {
+        dao: await dao.getAddress(),
+        token: await token.getAddress(),
+        router: ZeroAddress,
+      },
+      mallory,
+    );
+    await assert.rejects(
+      client.propose({
+        kind: "reward",
+        amount: 1n,
+        description: "Mallory",
+      }),
+      /GovernorInsufficientProposerVotes/,
+    );
+    await assert.rejects(
+      client.propose({
+        kind: "fee",
+        amount: 1001n,
+        address: mallory.address,
+        description: "Fee attack",
+      }),
+      /at most 10%/,
+    );
+    await assert.rejects(client.vote("1", 3, "Invalid vote"), /Choose against/);
+  });
   it("uses soulbound balances for votes and executes changes only through its timelock", async () => {
     const { deployer, voter, recipient, token, dao, forwarderAddress } =
       await deployGovernance();

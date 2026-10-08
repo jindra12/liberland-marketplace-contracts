@@ -2,11 +2,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DeploymentManifest, SupportedChain } from "../src/client/types";
 import { deployMarketplaceFromBrowser } from "../src/deployment/browser";
-import { deployMarketplaceOnTron } from "../src/deployment/tron";
-import { TronWeb } from "tronweb";
 import hre from "hardhat";
 
-const supportedChains: SupportedChain[] = ["ethereum", "tron"];
+const supportedChains: SupportedChain[] = ["ethereum"];
 
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name];
@@ -52,51 +50,24 @@ const main = async () => {
     hre.artifacts.readArtifact("MarketplaceTimelock"),
     hre.artifacts.readArtifact("ERC1967ProxyDeployment"),
   ]);
-  const manifest: DeploymentManifest =
-    chain === "tron"
-      ? await deployMarketplaceOnTron({
-          tronWeb: new TronWeb({
-            fullHost: requiredEnvironment("TRON_FULL_HOST"),
-            privateKey: requiredEnvironment("TRON_PRIVATE_KEY"),
-          }),
-          network: hre.network.name,
-          chainId: requiredEnvironment("TRON_CHAIN_ID"),
-          poolManagerAddress,
-          positionManagerAddress: requiredEnvironment(
-            "POSITION_MANAGER_ADDRESS",
-          ),
-          permit2Address: requiredEnvironment("PERMIT2_ADDRESS"),
-          tokenName,
-          tokenSymbol,
-          initialSupply,
-          tokenArtifact,
-          swapArtifact,
-          daoArtifact,
-          rewardArtifact,
-          forwarderArtifact,
-          timelockArtifact,
-          proxyArtifact,
-        })
-      : await deployMarketplaceFromBrowser({
-          chain,
-          network: hre.network.name,
-          poolManagerAddress,
-          positionManagerAddress: requiredEnvironment(
-            "POSITION_MANAGER_ADDRESS",
-          ),
-          permit2Address: requiredEnvironment("PERMIT2_ADDRESS"),
-          tokenName,
-          tokenSymbol,
-          initialSupply,
-          signer: (await hre.ethers.getSigners())[0],
-          tokenArtifact,
-          swapArtifact,
-          daoArtifact,
-          rewardArtifact,
-          forwarderArtifact,
-          timelockArtifact,
-          proxyArtifact,
-        });
+  const manifest: DeploymentManifest = await deployMarketplaceFromBrowser({
+    chain,
+    network: hre.network.name,
+    poolManagerAddress,
+    positionManagerAddress: requiredEnvironment("POSITION_MANAGER_ADDRESS"),
+    permit2Address: requiredEnvironment("PERMIT2_ADDRESS"),
+    tokenName,
+    tokenSymbol,
+    initialSupply,
+    signer: (await hre.ethers.getSigners())[0],
+    tokenArtifact,
+    swapArtifact,
+    daoArtifact,
+    rewardArtifact,
+    forwarderArtifact,
+    timelockArtifact,
+    proxyArtifact,
+  });
 
   const outputDirectory = join(process.cwd(), "deployments");
   await mkdir(outputDirectory, { recursive: true });

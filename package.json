@@ -2,18 +2,18 @@
   "name": "@liberland/marketplace-contracts",
   "version": "0.1.0",
   "private": true,
-  "description": "Ethereum and TRON Liberland Marketplace token and swap contracts",
+  "description": "Ethereum Liberland Marketplace token and swap contracts",
   "packageManager": "yarn@1.22.22",
   "exports": {
     ".": "./src/index.ts",
     "./deployment/browser": "./src/deployment/browser.ts",
     "./deployment/artifacts": "./src/deployment/artifacts.ts",
     "./deployment/networks": "./src/deployment/networks.ts",
-    "./deployment/tron": "./src/deployment/tron.ts",
     "./client/ethereum": "./src/client/ethereum.ts",
     "./client/venture": "./src/client/venture.ts",
-    "./client/thirdweb": "./src/client/thirdweb.ts",
-    "./client/tron": "./src/client/tron.ts"
+    "./client/trading": "./src/client/trading.ts",
+    "./client/governance": "./src/client/governance.ts",
+    "./client/thirdweb": "./src/client/thirdweb.ts"
   },
   "scripts": {
     "build": "hardhat compile && yarn export:artifacts",
@@ -50,7 +50,6 @@
     "@uniswap/v4-periphery": "^1.0.3",
     "ethers": "^6.17.0",
     "solmate": "^6.8.0",
-    "thirdweb": "^5.121.1",
-    "tronweb": "^6.5.0"
+    "thirdweb": "^5.121.1"
   }
 }

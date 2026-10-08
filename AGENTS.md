@@ -9,7 +9,6 @@ contract compilation, security testing, and deployment tooling remain owned here
 The supported targets are:
 
 - Ethereum-compatible networks, including Ethereum mainnet.
-- TRON, using the Solidity/TRON toolchain and TronWeb-compatible deployment output.
 
 ## Non-negotiable Security Rules
 
@@ -57,8 +56,6 @@ The supported targets are:
 - Keep chain-independent contract interfaces and ABI exports stable and versioned.
 - Ethereum client support must remain compatible with thirdweb and standard EVM
   providers/signers.
-- TRON deployment and interaction output must be usable by TronWeb, including TRON
-  address/transaction conventions.
 - Do not claim cross-chain behavioral equivalence until the same authorization, asset,
   upgrade, and failure semantics are tested on each target.
 - Keep deployment logic deterministic and idempotent where possible. Record chain ID,
@@ -78,13 +75,9 @@ The package currently exports these frontend-callable APIs:
 - `deployMarketplaceFromBrowser(options)`: deploys Ethereum implementations and proxies,
   initializes and wires token, DAO, reward token, swap router, timelock, and forwarder,
   reports transaction receipts through `onTransaction`, and returns a `DeploymentManifest`.
-- `deployMarketplaceOnTron(options)`: performs the analogous deployment and wiring with
-  TronWeb, waits for confirmations, reports transaction IDs, and returns a manifest.
 - `EvmTokenClient.balanceOf(owner)`, `transfer(recipient, amount)`,
   `approve(spender, amount)`, and `permit(owner, spender, amount, deadline)`.
 - `ThirdwebTokenClient.balanceOf(owner)`, `transfer(recipient, amount)`, and
-  `approve(spender, amount)`.
-- `TronTokenClient.balanceOf(owner)`, `transfer(recipient, amount)`, and
   `approve(spender, amount)`.
 - `MarketplaceGasSponsor.signRequest(target, data, gas, deadline, signer, value?)` and
   `submit(request, relayer)`: Ethereum ERC-2771 signing and forwarding primitives. The
@@ -93,6 +86,12 @@ The package currently exports these frontend-callable APIs:
   `mintPosition(request)`, `decreaseLiquidity(request)`, `collectFees(request)`,
   `burnEmptyPosition(tokenId, poolKey, deadline, hookData?)`, and
   `getPositionLiquidity(tokenId)`.
+- `MarketplaceSwapClient.listPools(token, beforeBlock?, poolId?)`, `quote(pool,
+  input, amount, slippageBps)` and `swap(quote, signer)` support fee-aware V4 trading
+  on configured Ethereum networks. No pool liquidity is created by deployment.
+- `MarketplaceDaoClient.listProposals(account?, beforeBlock?)`, `propose(input)`,
+  `vote(id, support, reason)`, `queue(proposal)` and `execute(proposal)` support
+  OpenZeppelin Governor discovery and timelocked governance on Ethereum networks.
 
 Keep these exports and their types documented when changed. Add typed client methods
 instead of making application components construct ABI strings, encode calldata, or
@@ -101,7 +100,7 @@ duplicate chain-specific transaction handling.
 ### Wallet and network operations the frontend must support
 
 - Connect/disconnect a wallet using the host application's wallet integration; this
-  package consumes an already-connected `Signer`, Thirdweb `Account`, or `TronWeb`.
+  package consumes an already-connected `Signer` or Thirdweb `Account`.
 - Read the active account and network/chain ID, validate that they match the selected
   deployment manifest, and request a supported-network switch where the wallet allows it.
 - Read token/native-currency balances and estimate/submit transactions using the chosen
@@ -121,7 +120,7 @@ Frontend clients and UI must be able to:
   `transferFrom` only where the connected account has an explicit allowance.
 - Create a gasless allowance with EIP-2612 `permit`, reading `nonces` and the EIP-712
   domain from the active token/network; handle expiry, signature rejection, and nonce
-  changes. `ThirdwebTokenClient` and `TronTokenClient` do not currently implement permit.
+  changes. `ThirdwebTokenClient` does not currently implement permit.
 - Root the caller's liquid balance with `soulbound(amount)`. Show liquid and rooted
   balances separately, explain that rooted units cannot be transferred, and show the
   current continuous-root timestamp used for reward eligibility.
@@ -180,7 +179,7 @@ the custom helper methods. The frontend needs to:
   direction, hook data, and exact native value when the input currency is native.
 - Show the router fee (`feeBps`) and recipient, input/output amounts, output minimum,
   transaction state, and the `SwapExecuted` result. Never imply that this router supplies
-  quotes or discovers pools: the current `SwapClient` interface has no implementation.
+  quotes or discovers pools: `MarketplaceSwapClient` supplies those client-side operations.
 - Approve ERC-20 currency to Permit2 and Permit2 to the PositionManager through
   `V4PositionClient.approveCurrency`; surface both transaction states and do not proceed
   to mint until the required approvals are confirmed.
@@ -209,16 +208,11 @@ the custom helper methods. The frontend needs to:
 
 - Ethereum contract deployments support the EVM token adapter, Thirdweb token adapter,
   ERC-2771 sponsor helper, browser deployment, DAO/timelock contracts, swap router, and
-  V4 position client, subject to configured compatible V4 infrastructure. Typed DAO and
-  swap adapters are still future client work; do not imply they are already implemented.
-- TRON currently provides browser deployment and basic token balance/transfer/approval
-  through TronWeb. Do not claim the EVM gas-sponsor helper, EIP-2612 permit, DAO client,
-  V4 swap router, or V4 positions work on TRON without deployed compatible contracts,
-  chain-specific transaction tests, and client implementations.
-- Add typed `DaoClient`, `RewardTokenClient`, and `SwapClient` implementations when the
-  frontend begins using those operations. The `SwapClient` interface is currently only a
-  type contract, not an implementation. Ensure Thirdweb and standard ethers signers can
-  invoke the same supported EVM behavior without duplicate calldata logic.
+  V4 position client, plus typed DAO and swap clients, subject to configured compatible
+  V4 infrastructure.
+- The frontend uses `MarketplaceDaoClient` and `MarketplaceSwapClient` for governance
+  and trading. Reward claims/redemption remain in `VentureClient`. Keep chain support
+  explicit and use the same typed adapters with Thirdweb and standard ethers signers.
 - Any new frontend workflow must be represented by a typed library operation, declared
   chain support, authorization requirements, expected events/results, and normal plus
   adversarial tests. Update this inventory and the README in the same change.

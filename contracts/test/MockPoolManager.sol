@@ -19,6 +19,30 @@ contract MockPoolManager {
 
     /// @notice Fixed output used by the test double to simulate a pool swap.
     uint128 public outputAmount;
+    event Initialize(
+        bytes32 indexed id,
+        Currency indexed currency0,
+        Currency indexed currency1,
+        uint24 fee,
+        int24 tickSpacing,
+        address hooks,
+        uint160 sqrtPriceX96,
+        int24 tick
+    );
+
+    /// @notice Emits a synthetic pool discovery event for browser-client tests.
+    function announcePool(PoolKey calldata key) external {
+        emit Initialize(
+            keccak256(abi.encode(key)),
+            key.currency0,
+            key.currency1,
+            key.fee,
+            key.tickSpacing,
+            address(key.hooks),
+            1,
+            0
+        );
+    }
 
     /// @notice Configures the output amount returned by simulated swaps.
     constructor(uint128 outputAmount_) {

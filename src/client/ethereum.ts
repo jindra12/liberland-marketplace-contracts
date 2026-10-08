@@ -19,7 +19,7 @@ export class EvmTokenClient implements TokenClient {
   constructor(
     address: string,
     signer: Signer,
-    chain: "ethereum" | "tron" = "ethereum",
+    chain: SupportedChain = "ethereum",
   ) {
     this.address = address;
     this.signer = signer;

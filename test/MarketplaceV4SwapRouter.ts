@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type { Log, LogDescription } from "ethers";
 import hre from "hardhat";
+import { MarketplaceSwapClient } from "../src/client/trading";
 
 describe("MarketplaceV4SwapRouter", () => {
   const deployFixture = async () => {
@@ -121,6 +122,127 @@ describe("MarketplaceV4SwapRouter", () => {
         "0x",
       ),
       /InsufficientOutput/,
+    );
+  });
+
+  it("discovers pools, quotes and trades through the typed browser client", async () => {
+    const { trader, tokenIn, tokenOut, poolManager, router } =
+      await deployFixture();
+    const key = {
+      currency0: await tokenIn.getAddress(),
+      currency1: await tokenOut.getAddress(),
+      fee: 3000,
+      tickSpacing: 60,
+      hooks: hre.ethers.ZeroAddress,
+    };
+    await poolManager.getFunction("announcePool")(key);
+    const quoter = await (
+      await hre.ethers.getContractFactory("MockV4Quoter")
+    ).deploy(await poolManager.getAddress());
+    const client = new MarketplaceSwapClient(
+      {
+        router: await router.getAddress(),
+        poolManager: await poolManager.getAddress(),
+        quoter: await quoter.getAddress(),
+      },
+      hre.ethers.provider,
+    );
+    const pools = await client.listPools(await tokenIn.getAddress());
+    assert.equal(pools.items.length, 1);
+    assert.equal(pools.items[0].currency0.symbol, "IN");
+    const quote = await client.quote(
+      pools.items[0],
+      key.currency0,
+      hre.ethers.parseEther("100"),
+      100,
+    );
+    assert.equal(quote.amountOut, hre.ethers.parseEther("90"));
+    assert.equal(quote.minimumOut, hre.ethers.parseEther("89.1"));
+    await tokenIn.connect(trader).getFunction("approve")(
+      await router.getAddress(),
+      0,
+    );
+    const hash = await client.swap(quote, trader);
+    assert.match(hash, /^0x[0-9a-f]{64}$/);
+    assert.equal(
+      await tokenOut.getFunction("balanceOf")(trader.address),
+      quote.amountOut,
+    );
+    assert.equal(
+      await tokenIn.getFunction("allowance")(
+        trader.address,
+        await router.getAddress(),
+      ),
+      0n,
+    );
+  });
+
+  it("rejects malicious trade inputs and a quoter from another manager", async () => {
+    const { trader, tokenIn, tokenOut, poolManager, router } =
+      await deployFixture();
+    const key = {
+      currency0: await tokenIn.getAddress(),
+      currency1: await tokenOut.getAddress(),
+      fee: 3000,
+      tickSpacing: 60,
+      hooks: hre.ethers.ZeroAddress,
+    };
+    await poolManager.getFunction("announcePool")(key);
+    const quoter = await (
+      await hre.ethers.getContractFactory("MockV4Quoter")
+    ).deploy(await poolManager.getAddress());
+    const client = new MarketplaceSwapClient(
+      {
+        router: await router.getAddress(),
+        poolManager: await poolManager.getAddress(),
+        quoter: await quoter.getAddress(),
+      },
+      hre.ethers.provider,
+    );
+    const pool = (await client.listPools(key.currency0)).items[0];
+    await assert.rejects(
+      client.quote(pool, key.currency0, 0n, 100),
+      /positive amount/,
+    );
+    await assert.rejects(
+      client.quote(pool, key.currency0, 1n, 1001),
+      /Slippage/,
+    );
+    await assert.rejects(
+      client.quote(pool, trader.address, 1n, 100),
+      /not part/,
+    );
+    const quote = await client.quote(
+      pool,
+      key.currency0,
+      hre.ethers.parseEther("100"),
+      100,
+    );
+    await assert.rejects(
+      client.swap({ ...quote, minimumOut: 0n }, trader),
+      /positive minimum/,
+    );
+    await assert.rejects(
+      client.swap({ ...quote, minimumOut: quote.amountOut + 1n }, trader),
+      /price moved/,
+    );
+    const wrongManager = await (
+      await hre.ethers.getContractFactory("MockPoolManager")
+    ).deploy(1);
+    const wrongQuoter = await (
+      await hre.ethers.getContractFactory("MockV4Quoter")
+    ).deploy(await wrongManager.getAddress());
+    const wrongClient = new MarketplaceSwapClient(
+      {
+        router: await router.getAddress(),
+        poolManager: await poolManager.getAddress(),
+        quoter: await wrongQuoter.getAddress(),
+      },
+      hre.ethers.provider,
+    );
+    await assert.rejects(
+      wrongClient.quote(pool, key.currency0, 1n, 100),
+      /PoolManager/,
     );
   });
 

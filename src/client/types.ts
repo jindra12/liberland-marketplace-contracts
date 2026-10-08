@@ -1,4 +1,4 @@
-export type SupportedChain = "ethereum" | "tron";
+export type SupportedChain = "ethereum";
 
 export interface DeploymentNetworkConfiguration {
   label: string;
@@ -9,6 +9,7 @@ export interface DeploymentNetworkConfiguration {
   poolManagerAddress: string;
   positionManagerAddress: string;
   permit2Address: string;
+  quoterAddress: string;
 }
 
 export interface PoolKeyInput {

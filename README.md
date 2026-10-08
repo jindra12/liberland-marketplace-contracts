@@ -9,7 +9,6 @@ The project is designed to provide updateable contracts with thoroughly tested s
 properties and stable interfaces for marketplace clients. The initial chain targets are:
 
 - Ethereum mainnet and other EVM-compatible networks.
-- TRON through its Solidity-compatible toolchain and TronWeb.
 
 The repository is included as a submodule by the frontend. It keeps its own contract and
 testing dependencies and exposes ABI/IDL and deployment artifacts for TypeScript clients.
@@ -38,12 +37,31 @@ invariant tests, and static analysis before deployment.
 
 ## Deployment and Client Integration
 
+### Browser exchange and DAO clients
+
+`MarketplaceSwapClient` (`/client/trading`) discovers initialized pools containing
+the venture token through PoolManager events. Discovery uses bounded 2,000-block
+pages with an explicit older-history cursor. `quote` uses the canonical network
+V4 quoter configured in `/deployment/networks`, deducts the DAO router fee and
+returns a slippage-protected output minimum. `swap` checks the quote again, approves
+only the required ERC-20 input amount, and submits through the venture router.
+Native ETH input is passed as transaction value. No initialized/liquid pool means
+no executable exchange quote; token deployment alone does not supply liquidity.
+
+`MarketplaceDaoClient` (`/client/governance`) discovers ProposalCreated events in
+bounded pages, reads snapshot voting power, quorum, votes, state and timelock ETA,
+and supports `vote`, `queue`, `execute` and typed `propose` actions for monthly
+rewards, router fees and token unrooting. Router/token changes are encoded through
+Governor relay and cannot bypass voting or the timelock. Anonymous readers can
+inspect markets and proposals; transactions require a connected wallet.
+
+These clients support Ethereum, Sepolia and the local mainnet fork.
+
 Deployment tooling will produce chain-specific records containing the chain/network,
 contract version, proxy and implementation addresses where relevant, and deployment
 transaction IDs. The client layer will provide TypeScript-compatible interfaces for:
 
-- thirdweb and standard EVM providers/signers on Ethereum-compatible networks;
-- TronWeb on TRON.
+- thirdweb and standard EVM providers/signers on Ethereum-compatible networks.
 
 Cross-chain support means compatible documented behavior, not identical bytecode. Each
 target must be tested independently before being advertised as supported.
@@ -63,8 +81,8 @@ The current implementation contains:
   days of soulbound balance; removing the entire bound balance resets eligibility;
 - `MarketplaceV4SwapRouter`, an upgrade-safe exact-input single-hop adapter that uses
   the V4 `PoolManager.unlock` callback, settles the input currency, and takes the output;
-- configuration-driven Ethereum and TRON deployment through UUPS proxies;
-- browser-compatible Ethereum and TronWeb deployment orchestration;
+- configuration-driven Ethereum deployment through UUPS proxies;
+- browser-compatible Ethereum deployment orchestration;
 - `MarketplaceGasSponsor`, an ERC-2771 typed-data client for a separately operated,
   funded relayer; and
 - V4 position client operations for minting, reducing, collecting, and burning standard
@@ -74,9 +92,7 @@ The router deliberately does not reimplement V4 pool accounting. V4 positions ar
 standard PositionManager NFTs. The monthly `MarketplaceLPToken` reward is not a V4
 position share: it is a redeemable incentive token, backed by the redemption assets
 funded into its reserve. Governance must fund the reserve and set a nonzero redemption
-rate before users can redeem. TRON does not have canonical Uniswap V4 deployments, so
-TRON deployment requires compatible PoolManager, PositionManager, and Permit2 addresses
-to be supplied by the operator and independently validated on the target network.
+rate before users can redeem.
 
 The ERC-2771 forwarder is deployed with the contracts, but gas sponsorship also requires
 an off-chain relayer that validates allowed targets/selectors and pays transaction gas.
@@ -92,16 +108,14 @@ yarn test
 yarn typecheck
 ```
 
-Select exactly one `DEPLOY_CHAIN` per deployment. The console runner uses Hardhat's
-configured EVM signer for Ethereum, and `TRON_FULL_HOST`, `TRON_CHAIN_ID`, and
-`TRON_PRIVATE_KEY` for TRON. Never commit private keys or put them in tracked env files.
+Set `DEPLOY_CHAIN=ethereum`. The console runner uses Hardhat's configured EVM signer.
+Never commit private keys or put them in tracked env files.
 
 ## Browser Deployment
 
 The Ethereum browser deployment API is exported from `src/deployment/browser.ts`; it
-accepts a connected EVM signer and compiled artifacts. The TRON browser API is exported
-from `src/deployment/tron.ts` and accepts the connected TronWeb instance. Both avoid
-reading secrets or environment variables:
+accepts a connected EVM signer and compiled artifacts without reading secrets or
+environment variables:
 
 ```ts
 import { deployMarketplaceFromBrowser } from "@liberland/marketplace-contracts";
@@ -130,7 +144,7 @@ Deployment creates the forwarder, implementations, proxies, timelock and DAO; as
 DAO control to the token and swap router; grants the Governor proposer/canceller roles;
 and renounces the deployer's timelock admin role. The DAO is the only route for
 configuration and upgrade authorization. Ethereum must use the official chain-specific
-Uniswap V4 addresses; TRON requires compatible self-supplied infrastructure addresses.
+Uniswap V4 addresses.
 
 `scripts/deploy.ts` is only the console runner. It loads the same artifacts through
 Hardhat, calls the browser-safe function, and writes the resulting manifest to disk.
@@ -184,8 +198,5 @@ for successful receipts before reporting a transaction as confirmed. Privileged 
 configuration is not exposed as an ordinary account action.
 
 The parent app currently exposes Ethereum deployment and these account actions.
-TRON's library deployment helper exists, but a browser TRON deployment flow and
-validated TVM-compatible infrastructure/artifacts are not yet integrated. Ethereum
-configuration must not be reused for TRON.
 
 See [`AGENTS.md`](AGENTS.md) for mandatory engineering and security rules.
