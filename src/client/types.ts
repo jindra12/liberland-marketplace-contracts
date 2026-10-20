@@ -1,81 +1,89 @@
 export type SupportedChain = "ethereum";
 
+export interface DeploymentTransaction {
+    label: string;
+    hash: string;
+}
+
 export interface DeploymentNetworkConfiguration {
-  label: string;
-  chain: "ethereum";
-  chainId: number;
-  network: string;
-  rpcUrl?: string;
-  poolManagerAddress: string;
-  positionManagerAddress: string;
-  permit2Address: string;
-  quoterAddress: string;
+    label: string;
+    chain: "ethereum";
+    chainId: number;
+    network: string;
+    rpcUrl?: string;
+    poolManagerAddress: string;
+    positionManagerAddress: string;
+    permit2Address: string;
+    quoterAddress: string;
+    stateViewAddress: string;
 }
 
 export interface PoolKeyInput {
-  currency0: string;
-  currency1: string;
-  fee: number;
-  tickSpacing: number;
-  hooks: string;
+    currency0: string;
+    currency1: string;
+    fee: number;
+    tickSpacing: number;
+    hooks: string;
 }
 
 export interface DeploymentManifest {
-  chain: SupportedChain;
-  network: string;
-  chainId: string;
-  deployedAt: string;
-  deployer: string;
-  implementations: {
-    forwarder: string;
-    token: string;
-    dao: string;
-    rewardToken: string;
-    swapRouter: string;
-    timelock: string;
-  };
-  token: {
-    address: string;
-    name: string;
-    symbol: string;
-    decimals: number;
-    initialSupply: string;
-  };
-  swap: {
-    address: string;
-    poolManager: string;
-    positionManager: string;
-    permit2: string;
-  };
-  dao: {
-    address: string;
-    timelock: string;
-    rewardToken: string;
-  };
+    chain: SupportedChain;
+    network: string;
+    chainId: string;
+    deployedAt: string;
+    deploymentBlock?: number;
+    deployer: string;
+    implementations: {
+        forwarder: string;
+        token: string;
+        dao: string;
+        rewardToken: string;
+        swapRouter: string;
+        timelock: string;
+    };
+    token: {
+        address: string;
+        name: string;
+        symbol: string;
+        decimals: number;
+        initialSupply: string;
+    };
+    swap: {
+        poolId?: string;
+        address: string;
+        poolManager: string;
+        positionManager: string;
+        permit2: string;
+    };
+    dao: {
+        address: string;
+        timelock: string;
+        rewardToken: string;
+    };
 }
 
 export interface TokenClient {
-  readonly chain: SupportedChain;
-  readonly address: string;
-  balanceOf(owner: string): Promise<bigint>;
-  transfer(recipient: string, amount: bigint): Promise<string>;
-  approve(spender: string, amount: bigint): Promise<string>;
-  permit?(
-    owner: string,
-    spender: string,
-    amount: bigint,
-    deadline: bigint,
-  ): Promise<{ v: number; r: string; s: string }>;
+    readonly chain: SupportedChain;
+    readonly address: string;
+    balanceOf(owner: string): Promise<bigint>;
+    transfer(recipient: string, amount: bigint): Promise<string>;
+    approve(spender: string, amount: bigint): Promise<string>;
+    permit?(
+        owner: string,
+        spender: string,
+        amount: bigint,
+        deadline: bigint,
+    ): Promise<{ v: number; r: string; s: string }>;
 }
 
 export interface SwapClient {
-  readonly chain: SupportedChain;
-  readonly address: string;
-  swapExactInputSingle(request: {
-    poolKey: PoolKeyInput;
-    zeroForOne: boolean;
-    amountIn: bigint;
-    amountOutMinimum: bigint;
-    hookData?: string;
-  }): Promise<{ transactionHash: string; amountOut: bigint }>;
+    readonly chain: SupportedChain;
+    readonly address: string;
+    swapExactInputSingle(request: {
+        poolKey: PoolKeyInput;
+        zeroForOne: boolean;
+        amountIn: bigint;
+        amountOutMinimum: bigint;
+        hookData?: string;
+    }): Promise<{ transactionHash: string; amountOut: bigint }>;
 }

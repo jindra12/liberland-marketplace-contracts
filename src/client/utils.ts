@@ -13,7 +13,7 @@ export const confirmTransaction = async (
 // Bounded log pages avoid unbounded RPC requests; callers can load older history.
 export const eventBlockWindow = (latest: number, beforeBlock?: number) => {
     const toBlock = beforeBlock ?? latest;
-    const fromBlock = Math.max(0, toBlock - 1999);
+    const fromBlock = Math.max(0, toBlock - 999);
     return {
         fromBlock,
         toBlock,

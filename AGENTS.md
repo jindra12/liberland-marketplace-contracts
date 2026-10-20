@@ -53,6 +53,9 @@ The supported targets are:
 
 ## Chain and Client Boundaries
 
+- TODO: integrate hosted gas sponsorship through Thirdweb. Keep sponsorship out of
+  the current implementation; do not build or operate a custom relayer for this release.
+
 - Keep chain-independent contract interfaces and ABI exports stable and versioned.
 - Ethereum client support must remain compatible with thirdweb and standard EVM
   providers/signers.
@@ -85,13 +88,26 @@ The package currently exports these frontend-callable APIs:
 - `V4PositionClient.approveCurrency(token, amount, expiration)`,
   `mintPosition(request)`, `decreaseLiquidity(request)`, `collectFees(request)`,
   `burnEmptyPosition(tokenId, poolKey, deadline, hookData?)`, and
-  `getPositionLiquidity(tokenId)`.
+  `getPositionLiquidity(tokenId)`, `ownerOf(tokenId)`, `verifyPosition(tokenId, poolKey)`
+  and `quoteFullRange(pool, stateViewAddress, amount0, amount1, slippageBps)`.
+  Test-network liquidity controls must use canonical StateView/SDK math, maximum
+  deposit budgets, explicit withdrawal minimums, and owner/pool checks.
 - `MarketplaceSwapClient.listPools(token, beforeBlock?, poolId?)`, `quote(pool,
   input, amount, slippageBps)` and `swap(quote, signer)` support fee-aware V4 trading
-  on configured Ethereum networks. No pool liquidity is created by deployment.
-- `MarketplaceDaoClient.listProposals(account?, beforeBlock?)`, `propose(input)`,
-  `vote(id, support, reason)`, `queue(proposal)` and `execute(proposal)` support
+  on configured Ethereum networks. Browser deployment initializes the standard ETH/token
+  pool when `poolTokensPerEth` is supplied; funding remains a separate, explicit LP action.
+- `MarketplaceDaoClient.listProposals(account?, beforeBlock?, records?)`, `propose(input)`,
+  `vote(id, support, reason)`, `queue(proposal)`, `execute(proposal)`, `cancel(proposal)`
+  and `settings()` support
   OpenZeppelin Governor discovery and timelocked governance on Ethereum networks.
+  Supply backend-persisted proposal records in applications to avoid repeated log scans.
+  Include voting delay/period, proposal threshold and quorum in typed proposals;
+  cancellations are restricted to the proposer while the proposal is pending.
+- Browser deployments accept a submitted-transaction journal and `onSubmitted` callback.
+  Persist each hash before confirmation and pass the journal when resuming after a reload.
+  Recovery verifies the sender, target and calldata; never silently redeploy missing steps.
+  The application syncs journals to owner-authenticated backend persistence for recovery
+  on other devices. Block deployment/resumption until journal loading/sync succeeds.
 
 Keep these exports and their types documented when changed. Add typed client methods
 instead of making application components construct ABI strings, encode calldata, or

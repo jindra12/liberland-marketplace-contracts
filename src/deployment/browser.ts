@@ -3,12 +3,20 @@ import {
     ContractFactory,
     Interface,
     parseUnits,
-    type ContractTransactionResponse,
     type InterfaceAbi,
     type Signer,
     type TransactionReceipt,
 } from "ethers";
-import type { DeploymentManifest } from "../client/types";
+import type {
+    DeploymentManifest,
+    DeploymentTransaction,
+} from "../client/types";
+import {
+    callDeploymentContract,
+    deployContract,
+    getVenturePoolPrice,
+    initializeVenturePool,
+} from "./transactionUtils";
 
 export const DEFAULT_INITIAL_SUPPLY = parseUnits("21000000", 18);
 
@@ -26,6 +34,7 @@ export interface BrowserEvmDeploymentOptions {
     tokenName: string;
     tokenSymbol: string;
     initialSupply?: bigint;
+    poolTokensPerEth?: bigint;
     signer: Signer;
     tokenArtifact: DeploymentArtifact;
     swapArtifact: DeploymentArtifact;
@@ -34,68 +43,44 @@ export interface BrowserEvmDeploymentOptions {
     forwarderArtifact: DeploymentArtifact;
     timelockArtifact: DeploymentArtifact;
     proxyArtifact: DeploymentArtifact;
+    transactions?: DeploymentTransaction[];
+    onSubmitted?: (transaction: DeploymentTransaction) => Promise<void> | void;
     onTransaction?: (
         label: string,
         receipt: TransactionReceipt,
     ) => Promise<void> | void;
 }
 
-const waitForTransaction = async (
-    transaction: ContractTransactionResponse | null,
-    label: string,
-    onTransaction?: BrowserEvmDeploymentOptions["onTransaction"],
-): Promise<void> => {
-    const receipt = await transaction?.wait();
-    if (receipt && onTransaction) {
-        await onTransaction(label, receipt);
-    }
-};
-
-const deploy = async (
-    factory: ContractFactory,
-    label: string,
-    onTransaction?: BrowserEvmDeploymentOptions["onTransaction"],
-    constructorArgs: readonly unknown[] = [],
-) => {
-    const contract = await factory.deploy(...constructorArgs);
-    await contract.waitForDeployment();
-    await waitForTransaction(
-        contract.deploymentTransaction(),
-        label,
-        onTransaction,
-    );
-    return contract;
-};
-
 const deployProxy = async (
     factory: ContractFactory,
     implementation: string,
     initialization: string,
     label: string,
-    onTransaction?: BrowserEvmDeploymentOptions["onTransaction"],
+    options: BrowserEvmDeploymentOptions,
 ) => {
-    const proxy = await factory.deploy(implementation, initialization);
-    await proxy.waitForDeployment();
-    await waitForTransaction(
-        proxy.deploymentTransaction(),
-        label,
-        onTransaction,
-    );
-    return proxy;
+    return deployContract(factory, label, options, [
+        implementation,
+        initialization,
+    ]);
 };
 
 const setGovernanceIfNeeded = async (
     contract: Contract,
     governance: string,
     label: string,
-    onTransaction?: BrowserEvmDeploymentOptions["onTransaction"],
+    options: BrowserEvmDeploymentOptions,
 ): Promise<void> => {
     const currentGovernance = await contract.getFunction("governance")();
     if (currentGovernance === governance) {
         return;
     }
-    const transaction = await contract.getFunction("setGovernance")(governance);
-    await waitForTransaction(transaction, label, onTransaction);
+    await callDeploymentContract(
+        contract,
+        "setGovernance",
+        [governance],
+        label,
+        options,
+    );
 };
 
 export const deployMarketplaceFromBrowser = async (
@@ -121,26 +106,33 @@ export const deployMarketplaceFromBrowser = async (
         );
     }
     const initialSupply = options.initialSupply ?? DEFAULT_INITIAL_SUPPLY;
-    const onTransaction = options.onTransaction;
-    const forwarder = await deploy(
+    getVenturePoolPrice(options);
+    const forwarder = await deployContract(
         new ContractFactory(
             options.forwarderArtifact.abi,
             options.forwarderArtifact.bytecode,
             options.signer,
         ),
         "ERC-2771 forwarder",
-        onTransaction,
+        options,
     );
     const forwarderAddress = await forwarder.getAddress();
+    const forwarderTransaction = options.transactions?.find(
+        (entry) => entry.label === "ERC-2771 forwarder",
+    );
+    const deploymentBlock = forwarderTransaction
+        ? (await provider.getTransactionReceipt(forwarderTransaction.hash))!
+              .blockNumber
+        : await provider.getBlockNumber();
 
-    const tokenImplementation = await deploy(
+    const tokenImplementation = await deployContract(
         new ContractFactory(
             options.tokenArtifact.abi,
             options.tokenArtifact.bytecode,
             options.signer,
         ),
         "token implementation",
-        onTransaction,
+        options,
         [forwarderAddress],
     );
     const tokenInitialization = new Interface(
@@ -161,17 +153,17 @@ export const deployMarketplaceFromBrowser = async (
         await tokenImplementation.getAddress(),
         tokenInitialization,
         "token proxy",
-        onTransaction,
+        options,
     );
 
-    const swapImplementation = await deploy(
+    const swapImplementation = await deployContract(
         new ContractFactory(
             options.swapArtifact.abi,
             options.swapArtifact.bytecode,
             options.signer,
         ),
         "swap implementation",
-        onTransaction,
+        options,
         [forwarderAddress],
     );
     const swapInitialization = new Interface(
@@ -182,27 +174,27 @@ export const deployMarketplaceFromBrowser = async (
         await swapImplementation.getAddress(),
         swapInitialization,
         "swap proxy",
-        onTransaction,
+        options,
     );
 
-    const rewardImplementation = await deploy(
+    const rewardImplementation = await deployContract(
         new ContractFactory(
             options.rewardArtifact.abi,
             options.rewardArtifact.bytecode,
             options.signer,
         ),
         "reward implementation",
-        onTransaction,
+        options,
         [forwarderAddress],
     );
-    const timelockImplementation = await deploy(
+    const timelockImplementation = await deployContract(
         new ContractFactory(
             options.timelockArtifact.abi,
             options.timelockArtifact.bytecode,
             options.signer,
         ),
         "timelock implementation",
-        onTransaction,
+        options,
     );
     const timelockInitialization = new Interface(
         options.timelockArtifact.abi,
@@ -217,16 +209,16 @@ export const deployMarketplaceFromBrowser = async (
         await timelockImplementation.getAddress(),
         timelockInitialization,
         "timelock proxy",
-        onTransaction,
+        options,
     );
-    const daoImplementation = await deploy(
+    const daoImplementation = await deployContract(
         new ContractFactory(
             options.daoArtifact.abi,
             options.daoArtifact.bytecode,
             options.signer,
         ),
         "DAO implementation",
-        onTransaction,
+        options,
         [forwarderAddress],
     );
 
@@ -242,7 +234,7 @@ export const deployMarketplaceFromBrowser = async (
         await daoImplementation.getAddress(),
         daoInitialization,
         "DAO proxy",
-        onTransaction,
+        options,
     );
 
     const tokenContract = new Contract(
@@ -260,13 +252,13 @@ export const deployMarketplaceFromBrowser = async (
         tokenContract,
         daoAddress,
         "token governance",
-        onTransaction,
+        options,
     );
     await setGovernanceIfNeeded(
         swapContract,
         daoAddress,
         "swap governance",
-        onTransaction,
+        options,
     );
     const timelockContract = new Contract(
         await timelock.getAddress(),
@@ -276,40 +268,63 @@ export const deployMarketplaceFromBrowser = async (
     const proposerRole = await timelockContract.getFunction("PROPOSER_ROLE")();
     const cancellerRole =
         await timelockContract.getFunction("CANCELLER_ROLE")();
-    await waitForTransaction(
-        await timelockContract.getFunction("grantRole")(
+    if (
+        !(await timelockContract.getFunction("hasRole")(
             proposerRole,
             daoAddress,
-        ),
-        "governor proposer role",
-        onTransaction,
-    );
-    await waitForTransaction(
-        await timelockContract.getFunction("grantRole")(
+        ))
+    ) {
+        await callDeploymentContract(
+            timelockContract,
+            "grantRole",
+            [proposerRole, daoAddress],
+            "governor proposer role",
+            options,
+        );
+    }
+    if (
+        !(await timelockContract.getFunction("hasRole")(
             cancellerRole,
             daoAddress,
-        ),
-        "governor canceller role",
-        onTransaction,
-    );
-    await waitForTransaction(
-        await timelockContract.getFunction("renounceRole")(
-            await timelockContract.getFunction("DEFAULT_ADMIN_ROLE")(),
-            deployer,
-        ),
-        "timelock admin renunciation",
-        onTransaction,
-    );
-    await waitForTransaction(
-        await tokenContract.getFunction("transferOwnership")(daoAddress),
-        "token governance ownership",
-        onTransaction,
-    );
-    await waitForTransaction(
-        await swapContract.getFunction("transferOwnership")(daoAddress),
-        "swap governance ownership",
-        onTransaction,
-    );
+        ))
+    ) {
+        await callDeploymentContract(
+            timelockContract,
+            "grantRole",
+            [cancellerRole, daoAddress],
+            "governor canceller role",
+            options,
+        );
+    }
+    const adminRole: string =
+        await timelockContract.getFunction("DEFAULT_ADMIN_ROLE")();
+    if (await timelockContract.getFunction("hasRole")(adminRole, deployer)) {
+        await callDeploymentContract(
+            timelockContract,
+            "renounceRole",
+            [adminRole, deployer],
+            "timelock admin renunciation",
+            options,
+        );
+    }
+    if ((await tokenContract.getFunction("owner")()) !== daoAddress) {
+        await callDeploymentContract(
+            tokenContract,
+            "transferOwnership",
+            [daoAddress],
+            "token governance ownership",
+            options,
+        );
+    }
+    if ((await swapContract.getFunction("owner")()) !== daoAddress) {
+        await callDeploymentContract(
+            swapContract,
+            "transferOwnership",
+            [daoAddress],
+            "swap governance ownership",
+            options,
+        );
+    }
 
     const daoContract = new Contract(
         daoAddress,
@@ -317,6 +332,10 @@ export const deployMarketplaceFromBrowser = async (
         options.signer,
     );
     const rewardToken = await daoContract.getFunction("rewardToken")();
+    const poolId = await initializeVenturePool(
+        await tokenProxy.getAddress(),
+        options,
+    );
     const network = await provider.getNetwork();
 
     return {
@@ -324,6 +343,7 @@ export const deployMarketplaceFromBrowser = async (
         network: options.network,
         chainId: network.chainId.toString(),
         deployedAt: new Date().toISOString(),
+        deploymentBlock,
         deployer,
         implementations: {
             forwarder: forwarderAddress,
@@ -341,6 +361,7 @@ export const deployMarketplaceFromBrowser = async (
             initialSupply: initialSupply.toString(),
         },
         swap: {
+            poolId,
             address: await swapProxy.getAddress(),
             poolManager: options.poolManagerAddress,
             positionManager: options.positionManagerAddress,

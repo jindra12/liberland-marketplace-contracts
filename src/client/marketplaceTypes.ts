@@ -44,10 +44,50 @@ export interface DaoProposal {
     quorumIsProjected: boolean;
     hasVoted: boolean;
     votingPower: bigint;
+    canCancel?: boolean;
 }
 export interface DaoProposalInput {
     description: string;
-    kind: "reward" | "fee" | "unroot";
+    kind:
+        | "reward"
+        | "fee"
+        | "unroot"
+        | "redemption"
+        | "reserve"
+        | "prebind"
+        | "voting-delay"
+        | "voting-period"
+        | "proposal-threshold"
+        | "quorum"
+        | "enable-upgrades"
+        | "freeze-upgrades"
+        | "upgrade";
     amount: bigint;
     address?: string;
+    target?: "token" | "router" | "reward" | "dao" | "timelock";
+    initialization?: string;
 }
+
+export interface DaoSettings {
+    votingDelay: bigint;
+    votingPeriod: bigint;
+    proposalThreshold: bigint;
+    quorumNumerator: bigint;
+    quorumDenominator: bigint;
+}
+
+export interface LiquidityQuote {
+    pool: VenturePool;
+    tickLower: number;
+    tickUpper: number;
+    liquidity: bigint;
+    amount0Maximum: bigint;
+    amount1Maximum: bigint;
+}
+
+export type DaoProposalRecord = Pick<
+    DaoProposal,
+    "id" | "proposer" | "description" | "targets" | "calldatas"
+> & {
+    values: string[];
+};

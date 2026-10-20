@@ -1,55 +1,59 @@
 {
-  "name": "@liberland/marketplace-contracts",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Ethereum Liberland Marketplace token and swap contracts",
-  "packageManager": "yarn@1.22.22",
-  "exports": {
-    ".": "./src/index.ts",
-    "./deployment/browser": "./src/deployment/browser.ts",
-    "./deployment/artifacts": "./src/deployment/artifacts.ts",
-    "./deployment/networks": "./src/deployment/networks.ts",
-    "./client/ethereum": "./src/client/ethereum.ts",
-    "./client/venture": "./src/client/venture.ts",
-    "./client/trading": "./src/client/trading.ts",
-    "./client/governance": "./src/client/governance.ts",
-    "./client/thirdweb": "./src/client/thirdweb.ts"
-  },
-  "scripts": {
-    "build": "hardhat compile && yarn export:artifacts",
-    "export:artifacts": "tsx scripts/export-browser-artifacts.ts",
-    "compile:solidity": "tsx scripts/compile-solidity.ts",
-    "test": "hardhat test",
-    "estimate:deployment": "tsx scripts/estimate-deployment.ts",
-    "format": "prettier --write \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
-    "format:check": "prettier --check \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
-    "deploy": "tsx scripts/deploy.ts",
-    "fork:local": "tsx scripts/start-local-fork.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "devDependencies": {
-    "@nomicfoundation/hardhat-ethers": "^3.0.9",
-    "@openzeppelin/hardhat-upgrades": "^3.9.1",
-    "@types/mocha": "^10.0.10",
-    "@types/node": "^20.17.30",
-    "hardhat": "^2.28.0",
-    "prettier": "^3.6.2",
-    "prettier-plugin-solidity": "^2.4.1",
-    "solc": "0.8.26",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.20.3",
-    "typescript": "^5.9.2"
-  },
-  "dependencies": {
-    "@openzeppelin/contracts": "^5.6.1",
-    "@openzeppelin/contracts-upgradeable": "^5.6.1",
-    "@uniswap/v4-core": "^1.0.2",
-    "@uniswap/v4-periphery": "^1.0.3",
-    "ethers": "^6.17.0",
-    "solmate": "^6.8.0",
-    "thirdweb": "^5.121.1"
-  }
+    "name": "@liberland/marketplace-contracts",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Ethereum Liberland Marketplace token and swap contracts",
+    "packageManager": "yarn@1.22.22",
+    "exports": {
+        ".": "./src/index.ts",
+        "./deployment/browser": "./src/deployment/browser.ts",
+        "./deployment/artifacts": "./src/deployment/artifacts.ts",
+        "./deployment/networks": "./src/deployment/networks.ts",
+        "./client/ethereum": "./src/client/ethereum.ts",
+        "./client/venture": "./src/client/venture.ts",
+        "./client/trading": "./src/client/trading.ts",
+        "./client/governance": "./src/client/governance.ts",
+        "./client/thirdweb": "./src/client/thirdweb.ts"
+    },
+    "scripts": {
+        "build": "hardhat compile && yarn export:artifacts",
+        "export:artifacts": "tsx scripts/export-browser-artifacts.ts",
+        "compile:solidity": "tsx scripts/compile-solidity.ts",
+        "test": "hardhat test",
+        "estimate:deployment": "tsx scripts/estimate-deployment.ts",
+        "format": "prettier --write \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
+        "format:check": "prettier --check \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
+        "deploy": "tsx scripts/deploy.ts",
+        "fork:local": "tsx scripts/start-local-fork.ts",
+        "fork:hosted": "tsx scripts/start-local-fork.ts --hosted",
+        "typecheck": "tsc --noEmit"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "devDependencies": {
+        "@nomicfoundation/hardhat-ethers": "^3.0.9",
+        "@openzeppelin/hardhat-upgrades": "^3.9.1",
+        "@types/mocha": "^10.0.10",
+        "@types/node": "^20.17.30",
+        "hardhat": "^2.28.0",
+        "prettier": "^3.6.2",
+        "prettier-plugin-solidity": "^2.4.1",
+        "solc": "0.8.26",
+        "ts-node": "^10.9.2",
+        "tsx": "^4.20.3",
+        "typescript": "^5.9.2"
+    },
+    "dependencies": {
+        "@uniswap/v4-sdk": "^2.4.1",
+        "@uniswap/sdk-core": "^7.15.0",
+        "jsbi": "^3.2.5",
+        "@openzeppelin/contracts": "^5.6.1",
+        "@openzeppelin/contracts-upgradeable": "^5.6.1",
+        "@uniswap/v4-core": "^1.0.2",
+        "@uniswap/v4-periphery": "^1.0.3",
+        "ethers": "^6.17.0",
+        "solmate": "^6.8.0",
+        "thirdweb": "^5.121.1"
+    }
 }

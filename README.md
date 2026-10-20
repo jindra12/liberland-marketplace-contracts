@@ -40,7 +40,7 @@ invariant tests, and static analysis before deployment.
 ### Browser exchange and DAO clients
 
 `MarketplaceSwapClient` (`/client/trading`) discovers initialized pools containing
-the venture token through PoolManager events. Discovery uses bounded 2,000-block
+the venture token through PoolManager events. Discovery uses bounded 1,000-block
 pages with an explicit older-history cursor. `quote` uses the canonical network
 V4 quoter configured in `/deployment/networks`, deducts the DAO router fee and
 returns a slippage-protected output minimum. `swap` checks the quote again, approves
@@ -50,12 +50,22 @@ no executable exchange quote; token deployment alone does not supply liquidity.
 
 `MarketplaceDaoClient` (`/client/governance`) discovers ProposalCreated events in
 bounded pages, reads snapshot voting power, quorum, votes, state and timelock ETA,
-and supports `vote`, `queue`, `execute` and typed `propose` actions for monthly
-rewards, router fees and token unrooting. Router/token changes are encoded through
+and supports `vote`, `queue`, `execute`, pending-proposer `cancel`, and typed `propose` actions for monthly
+rewards, router fees, token unrooting, treasury-funded prebinding, reserve funding,
+redemption rates, implementation upgrades, upgrade enablement and permanent freezes.
+Voting delay, voting period, proposal threshold and quorum are also governed proposal
+types. `settings()` reads their live values; durations use the Governor's seconds clock.
+Router/token changes are encoded through
 Governor relay and cannot bypass voting or the timelock. Anonymous readers can
 inspect markets and proposals; transactions require a connected wallet.
 
 These clients support Ethereum, Sepolia and the local mainnet fork.
+
+The sister backend persists pool and proposal events in MongoDB through
+`GET /api/startups/:id/contract-index?deploymentId=...`. It resumes from a saved,
+block-hash-verified cursor instead of making every browser scan history. Pass its
+proposal records to `listProposals(account, undefined, records)`. Current prices,
+balances and governance states still come from chain reads.
 
 Deployment tooling will produce chain-specific records containing the chain/network,
 contract version, proxy and implementation addresses where relevant, and deployment
@@ -129,6 +139,7 @@ const manifest = await deployMarketplaceFromBrowser({
   tokenName,
   tokenSymbol,
   initialSupply: 21_000_000n * 10n ** 18n,
+  poolTokensPerEth: 2_000n * 10n ** 18n,
   signer,
   tokenArtifact,
   swapArtifact,
@@ -145,6 +156,26 @@ DAO control to the token and swap router; grants the Governor proposer/canceller
 and renounces the deployer's timelock admin role. The DAO is the only route for
 configuration and upgrade authorization. Ethereum must use the official chain-specific
 Uniswap V4 addresses.
+
+`poolTokensPerEth` initializes a hook-free native ETH/token pool at the user's
+chosen starting price (0.3% pool fee). It does not spend liquidity funds. The
+manifest includes its pool ID and deployment block. Use Uniswap's position UI on
+mainnet, or `V4PositionClient` on test networks, to fund/manage standard positions.
+`quoteFullRange` uses the configured canonical StateView and Uniswap V4 SDK to size
+native/token deposits within maximum budgets and slippage limits. `verifyPosition`
+checks NFT ownership and pool identity. The parent app provides test-network deposit,
+inspection, withdrawal with explicit receipt minimums, fee collection and empty-NFT closure.
+
+For resumable deployments, persist each `{label, hash}` in `onSubmitted` before
+waiting for confirmation and supply those records as `transactions` on the next
+call. The runner validates sender, destination and calldata, reuses receipts, and
+skips completed ownership/role changes. Missing or mismatched transactions stop
+recovery rather than triggering another deployment. The parent frontend stores
+this journal locally before syncing it to the Venture owner's private backend record
+at `/api/startups/:id/deployment-recovery?walletAddress=...` (GET/PUT/DELETE).
+The same marketplace login and wallet can resume on another device. New deployments
+are blocked until the backend journal loads; failed synchronization retains the local
+hash backup. Completed manifest persistence can be retried without redeployment.
 
 `scripts/deploy.ts` is only the console runner. It loads the same artifacts through
 Hardhat, calls the browser-safe function, and writes the resulting manifest to disk.
@@ -181,9 +212,13 @@ yarn workspace @liberland/marketplace-contracts fork:local
 The runner uses the existing `REACT_APP_THIRDWEB` value from the parent's `.env` or
 shell environment and forks the latest mainnet block when started. Hardhat provides
 20 funded development accounts. Never use these public development keys on mainnet.
-Select **Local Ethereum mainnet fork** in the deployment form. If the browser runs
-on your desktop while this repository runs over SSH, tunnel port 8545 to your desktop.
+Select **Hosted Ethereum mainnet fork (test deployment)** in the deployment form.
 Local chain state is reset when the fork node restarts, unlike deployed mainnet contracts.
+
+For a deliberately public hosted test fork, run `yarn fork:hosted`. This binds port
+8545 on all interfaces. The sister backend forwards `/api/venture-test-rpc` to this node
+so HTTPS browsers can connect without mixed-content requests. Anyone can mutate or
+reset this development chain; never load real keys or treat its balances as real funds.
 
 Applications select a configuration by key; ordinary users should never need to type
 chain IDs, PoolManager, PositionManager, or Permit2 addresses.

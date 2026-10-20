@@ -13,7 +13,7 @@ const main = () => {
             "--fork",
             `https://${deploymentNetworks.ethereum.chainId}.rpc.thirdweb.com/${requiredEnvironment("REACT_APP_THIRDWEB")}`,
             "--hostname",
-            rpc.hostname,
+            process.argv.includes("--hosted") ? "0.0.0.0" : rpc.hostname,
             "--port",
             rpc.port,
         ],

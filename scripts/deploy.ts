@@ -59,6 +59,9 @@ const main = async () => {
     tokenName,
     tokenSymbol,
     initialSupply,
+    poolTokensPerEth: process.env.POOL_TOKENS_PER_ETH
+      ? hre.ethers.parseUnits(process.env.POOL_TOKENS_PER_ETH, 18)
+      : undefined,
     signer: (await hre.ethers.getSigners())[0],
     tokenArtifact,
     swapArtifact,
