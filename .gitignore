@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Hardhat and Solidity build output
+artifacts/
+cache/
+typechain/
+build/
+out/
+dist/
+
+# Test and analysis output
+coverage/
+.nyc_output/
+reports/
+
+# Deployment output and local upgrade manifests
+deployments/
+.openzeppelin/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.seed
+*.mnemonic
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# TypeScript and tooling caches
+*.tsbuildinfo
+.eslintcache
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
