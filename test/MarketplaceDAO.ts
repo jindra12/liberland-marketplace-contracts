@@ -124,6 +124,51 @@ const governCall = async (
 };
 
 describe("MarketplaceDAO", () => {
+    it("prevents a one-token bootstrap voter from executing governance for the entire fixed supply", async () => {
+        const { voter, dao } = await deployGovernance(
+            hre.ethers.parseEther("1"),
+        );
+        await assert.rejects(
+            governCall(
+                dao,
+                voter,
+                await dao.getAddress(),
+                dao.interface.encodeFunctionData("setRewardPerPeriod", [1n]),
+            ),
+            /quorum|GovernorInsufficientProposerVotes|GovernorUnexpectedProposalState/,
+        );
+    });
+
+    it("awards proportional monthly rewards instead of paying a one-wei account the same as a large holder", async () => {
+        const { voter, recipient, dao } = await deployGovernance(
+            hre.ethers.parseEther("1000000"),
+            1n,
+        );
+        await governCall(
+            dao,
+            voter,
+            await dao.getAddress(),
+            dao.interface.encodeFunctionData("setRewardPerPeriod", [
+                hre.ethers.parseEther("5"),
+            ]),
+        );
+        await hre.network.provider.send("evm_increaseTime", [
+            30 * 24 * 60 * 60 + 1,
+        ]);
+        await hre.network.provider.send("evm_mine");
+        await dao.connect(voter).getFunction("claimReward")();
+        await dao.connect(recipient).getFunction("claimReward")();
+        const rewards = await hre.ethers.getContractAt(
+            "MarketplaceLPToken",
+            await dao.rewardToken(),
+        );
+        assert.ok(
+            (await rewards.balanceOf(recipient.address)) <
+                (await rewards.balanceOf(voter.address)),
+            "A one-wei identity must not earn the same monthly payout as a million-token holder.",
+        );
+    });
+
     it("permits the proposer to cancel a pending proposal but rejects Mallory and late cancellation", async () => {
         const {
             voter,

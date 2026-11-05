@@ -1,47 +1,77 @@
 import assert from "node:assert/strict";
 import { Contract, parseEther } from "ethers";
 import hre from "hardhat";
-import {
-    deployMarketplaceFromBrowser,
-    type BrowserEvmDeploymentOptions,
-} from "../src/deployment/browser";
+import { deployMarketplaceFromBrowser } from "../src/deployment/browser";
 import type { DeploymentTransaction } from "../src/client/types";
-
-const deploymentOptions = async (): Promise<BrowserEvmDeploymentOptions> => {
-    const signer = (await hre.ethers.getSigners())[0];
-    const manager = await (
-        await hre.ethers.getContractFactory("MarketplacePoolManager")
-    ).deploy(signer.address);
-    await manager.waitForDeployment();
-    return {
-        chain: "ethereum",
-        network: "hardhat",
-        signer,
-        tokenName: "Recovered Venture",
-        tokenSymbol: "RCV",
-        poolTokensPerEth: parseEther("2000"),
-        poolManagerAddress: await manager.getAddress(),
-        positionManagerAddress: signer.address,
-        permit2Address: signer.address,
-        tokenArtifact: await hre.artifacts.readArtifact("MarketplaceToken"),
-        swapArtifact: await hre.artifacts.readArtifact(
-            "MarketplaceV4SwapRouter",
-        ),
-        daoArtifact: await hre.artifacts.readArtifact("MarketplaceDAO"),
-        rewardArtifact: await hre.artifacts.readArtifact("MarketplaceLPToken"),
-        timelockArtifact: await hre.artifacts.readArtifact(
-            "MarketplaceTimelock",
-        ),
-        forwarderArtifact: await hre.artifacts.readArtifact(
-            "MarketplaceForwarder",
-        ),
-        proxyArtifact: await hre.artifacts.readArtifact(
-            "ERC1967ProxyDeployment",
-        ),
-    };
-};
+import { getVenturePoolPrice } from "../src/deployment/transactionUtils";
+import { deploymentOptions } from "./utils";
 
 describe("Browser deployment recovery", () => {
+    it("continues when Mallory initializes the pool first at the requested price", async () => {
+        const options = await deploymentOptions();
+        const mallory = (await hre.ethers.getSigners())[1];
+        const manager = await hre.ethers.getContractAt(
+            "MarketplacePoolManager",
+            options.poolManagerAddress,
+            mallory,
+        );
+        await assert.doesNotReject(
+            deployMarketplaceFromBrowser({
+                ...options,
+                onTransaction: async (label, receipt) => {
+                    if (label === "token proxy") {
+                        assert.ok(receipt.contractAddress);
+                        await manager.getFunction("initialize")(
+                            {
+                                currency0: hre.ethers.ZeroAddress,
+                                currency1: receipt.contractAddress,
+                                fee: 3000,
+                                tickSpacing: 60,
+                                hooks: hre.ethers.ZeroAddress,
+                            },
+                            getVenturePoolPrice(options),
+                        );
+                    }
+                },
+            }),
+            "An already initialized pool at the reviewed price must not strand the deployment.",
+        );
+    });
+
+    it("recovers when the pool initialized but its submission checkpoint was not saved", async () => {
+        const options = await deploymentOptions();
+        const transactions: DeploymentTransaction[] = [];
+        await assert.rejects(
+            deployMarketplaceFromBrowser({
+                ...options,
+                transactions,
+                onSubmitted: (entry) => {
+                    if (entry.label === "ETH/token pool initialization") {
+                        throw new Error("Checkpoint persistence interrupted");
+                    }
+                    transactions.push(entry);
+                },
+            }),
+            /Checkpoint persistence interrupted/,
+        );
+        assert.equal(
+            transactions.some(
+                (entry) => entry.label === "ETH/token pool initialization",
+            ),
+            false,
+        );
+        await assert.doesNotReject(
+            deployMarketplaceFromBrowser({
+                ...options,
+                transactions,
+                onSubmitted: (entry) => {
+                    transactions.push(entry);
+                },
+            }),
+            "Recovery must detect the confirmed pool state rather than submitting initialization again.",
+        );
+    });
+
     it("resumes submitted transactions, initializes the pool and hands control to the DAO without duplicates", async () => {
         const options = await deploymentOptions();
         const transactions: DeploymentTransaction[] = [];

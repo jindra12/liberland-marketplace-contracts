@@ -235,3 +235,24 @@ configuration is not exposed as an ordinary account action.
 The parent app currently exposes Ethereum deployment and these account actions.
 
 See [`AGENTS.md`](AGENTS.md) for mandatory engineering and security rules.
+
+## Security Regressions
+
+The deployment regressions assert safer behavior against the current unfixed client:
+
+```bash
+yarn test --no-compile test/MarketplaceDeploymentBoundaries.ts
+yarn test:fork --no-compile
+```
+
+The first command uses only an isolated Hardhat chain. The fork command reads current
+Ethereum state through the existing `REACT_APP_THIRDWEB` setting in the parent `.env`
+or process environment. All signed transactions stay on the in-process local chain;
+it does not deploy to mainnet, start the hosted fork service, or expose a port.
+Run `yarn hardhat compile` first to compile Uniswap's official test swap harness.
+The fork case is separate from the default unit suite and restores the local chain.
+
+Expected failing assertions cover edited spending infrastructure, invalid supply
+preflight, mined replacement recovery, and an empty canonical pool accepting a moved
+price for first liquidity. These are reproductions, not application fixes or a claim
+that every economic attack has been simulated profitably.

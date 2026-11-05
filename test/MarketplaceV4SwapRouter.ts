@@ -103,6 +103,34 @@ describe("MarketplaceV4SwapRouter", () => {
     );
   });
 
+  it("rejects a signed swap mined a day after the trader approved it", async () => {
+    const { trader, tokenIn, tokenOut, router } = await deployFixture();
+    const key = {
+      currency0: await tokenIn.getAddress(),
+      currency1: await tokenOut.getAddress(),
+      fee: 3000,
+      tickSpacing: 60,
+      hooks: hre.ethers.ZeroAddress,
+    };
+    await hre.network.provider.send("evm_setAutomine", [false]);
+    try {
+      const transaction = await router
+        .connect(trader)
+        .getFunction("swapExactInputSingle")(
+        key,
+        true,
+        hre.ethers.parseEther("100"),
+        hre.ethers.parseEther("89"),
+        "0x",
+      );
+      await hre.network.provider.send("evm_increaseTime", [24 * 60 * 60]);
+      await hre.network.provider.send("evm_mine");
+      await assert.rejects(transaction.wait(), /deadline|expired|reverted/i);
+    } finally {
+      await hre.network.provider.send("evm_setAutomine", [true]);
+    }
+  });
+
   it("rejects output below the caller's minimum", async () => {
     const { trader, tokenIn, tokenOut, router } = await deployFixture();
     const key = {
