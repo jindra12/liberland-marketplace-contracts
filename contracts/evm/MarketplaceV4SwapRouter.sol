@@ -65,6 +65,7 @@ contract MarketplaceV4SwapRouter is
     error InvalidFee();
     error FeeTransferFailed();
     error GovernanceAlreadySet();
+    error SwapExpired(uint256 deadline);
 
     event SwapExecuted(
         address indexed sender,
@@ -108,14 +109,16 @@ contract MarketplaceV4SwapRouter is
         poolManager = poolManager_;
     }
 
-    /// @notice Swaps one input currency for output through V4 and enforces the caller's minimum.
+    /// @notice Swaps through V4 only before the signed deadline and above the caller's minimum output.
     function swapExactInputSingle(
         PoolKey calldata key,
         bool zeroForOne,
         uint128 amountIn,
         uint128 amountOutMinimum,
-        bytes calldata hookData
+        bytes calldata hookData,
+        uint256 deadline
     ) external payable returns (uint256 amountOut) {
+        if (block.timestamp > deadline) revert SwapExpired(deadline);
         if (_reentrancyStatus == _ENTERED) revert ReentrantCall();
         _reentrancyStatus = _ENTERED;
         if (amountIn == 0) revert InvalidAmount();

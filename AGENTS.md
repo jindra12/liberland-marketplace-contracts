@@ -104,6 +104,9 @@ The package currently exports these frontend-callable APIs:
   Include voting delay/period, proposal threshold and quorum in typed proposals;
   cancellations are restricted to the proposer while the proposal is pending.
 - Browser deployments accept a submitted-transaction journal and `onSubmitted` callback.
+  Hosted applications coordinating multiple browsers/devices must also pass
+  `beforeTransaction` to fail closed when their backend runner ownership is lost.
+  There is no automatic ownership expiry while a wallet prompt may remain open.
   Persist each hash before confirmation and pass the journal when resuming after a reload.
   Recovery verifies the sender, target and calldata; never silently redeploy missing steps.
   The application syncs journals to owner-authenticated backend persistence for recovery
@@ -139,7 +142,8 @@ Frontend clients and UI must be able to:
   changes. `ThirdwebTokenClient` does not currently implement permit.
 - Root the caller's liquid balance with `soulbound(amount)`. Show liquid and rooted
   balances separately, explain that rooted units cannot be transferred, and show the
-  current continuous-root timestamp used for reward eligibility.
+  current continuous-root timestamp used for reward eligibility. Any rooted balance
+  change restarts the 30-day reward period, including top-ups and partial unrooting.
 - Read timestamp vote data using `clock`, `CLOCK_MODE`, `getVotes`, `getPastVotes`, and
   `getPastTotalSupply`; choose a delegate with `delegate` or `delegateBySig`.
 - Explain that `soulboundFor`, `unsoulbound`, governance assignment, and upgrade controls
@@ -154,6 +158,9 @@ the custom helper methods. The frontend needs to:
   `rewardToken`, `rewardPerPeriod`, `lastClaimAt`, `votingDelay`, `votingPeriod`,
   `proposalThreshold`, `quorum`, `quorumNumerator`, `quorumDenominator`, and
   `proposalNeedsQueuing`.
+- Quorum uses the whole fixed token supply, not just rooted supply. `rewardPerPeriod`
+  is a supply-wide budget; display each holder's supply-weighted share, never a flat
+  per-wallet entitlement. Read `claimableReward(account)` for current eligibility.
 - Discover proposals and render their proposer, description, proposal ID, snapshot,
   deadline, ETA, state, quorum, and for/against/abstain totals using `hashProposal`,
   `state`, `proposalProposer`, `proposalSnapshot`, `proposalDeadline`, `proposalEta`,
@@ -193,6 +200,10 @@ the custom helper methods. The frontend needs to:
   `PoolKeyInput`; obtain a quote from a trusted V4 quoter/pool source; compute and show
   slippage-protected `amountOutMinimum`; then call `swapExactInputSingle` with the proper
   direction, hook data, and exact native value when the input currency is native.
+- Preserve each quote's on-chain deadline. Verify canonical spenders and generated
+  router/forwarder bytecode before approvals, and fail closed on unknown upgrades.
+- Preserve `initializationBlock` from pool discovery for old empty pools; never silently
+  accept a moved empty-pool price as the founder's initial price.
 - Show the router fee (`feeBps`) and recipient, input/output amounts, output minimum,
   transaction state, and the `SwapExecuted` result. Never imply that this router supplies
   quotes or discovers pools: `MarketplaceSwapClient` supplies those client-side operations.

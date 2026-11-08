@@ -83,12 +83,18 @@ The current implementation contains:
 - `MarketplaceToken`, an upgradeable ERC-20 with EIP-2612 Permit, configurable name,
   symbol, and initial supply, defaulting to 21 million tokens with 18 decimals;
 - `MarketplaceDAO`, an OpenZeppelin Governor using checkpointed soulbound token voting,
-  a 4% quorum, a one-day voting delay, seven-day voting period, and a two-day timelock;
+  a 4% quorum of the **entire fixed ERC-20 supply** (rounded up), a one-day voting
+  delay, seven-day voting period, and a two-day timelock. Only rooted, delegated
+  balances vote; an early one-token rooter cannot govern a 21-million-token supply;
 - `MarketplaceTimelock`, a DAO-operated UUPS timelock. Its own upgrades can only be
   authorized by a queued self-call, and can be permanently disabled through governance;
 - `MarketplaceLPToken`, a DAO-minted reward token with a configurable, reserve-backed
   redemption path to the underlying marketplace token. Claims require 30 continuous
-  days of soulbound balance; removing the entire bound balance resets eligibility;
+  days at an unchanged soulbound balance. Every top-up or partial/full unroot resets
+  eligibility. `rewardPerPeriod` is the supply-wide monthly budget, not a per-wallet
+  payment: each claim is `floor(budget * rootedBalance / totalSupply)`. Splitting stake
+  across wallets cannot increase its combined reward. Claims do not accumulate missed
+  periods, and a successful claim starts another 30-day wait;
 - `MarketplaceV4SwapRouter`, an upgrade-safe exact-input single-hop adapter that uses
   the V4 `PoolManager.unlock` callback, settles the input currency, and takes the output;
 - configuration-driven Ethereum deployment through UUPS proxies;
@@ -103,6 +109,38 @@ standard PositionManager NFTs. The monthly `MarketplaceLPToken` reward is not a 
 position share: it is a redeemable incentive token, backed by the redemption assets
 funded into its reserve. Governance must fund the reserve and set a nonzero redemption
 rate before users can redeem.
+
+### Security boundaries for deployment and trading
+
+- Browser deployment validates the positive uint208 fixed supply, token identity,
+  starting price, and configured canonical infrastructure before broadcasting.
+- Pool initialization is idempotent only at the explicitly requested price. An existing
+  pool at another price requires review; the library never silently resets or adopts it.
+- Deployment checkpoints include transaction hash, nonce, chain ID and submission block.
+  Recovery verifies sender, target, calldata, native value and chain. Matching wallet
+  replacements are supported, but cancellation or changed intent is rejected. A missing
+  old hash is searched in at most 64 recent blocks; ambiguous or older replacements
+  require receipt/nonce reconciliation, never automatic duplicate deployment.
+- Liquidity approvals pin Permit2 and PositionManager to the chain configuration and
+  verify code/manager relationships. Swaps additionally verify the proxy and implementation
+  executable bytes against generated build artifacts, and verify the trusted forwarder.
+  A legitimate new router build needs a reviewed library/artifact update before approval.
+- An empty pool is quoted only against its canonical `Initialize` price. Discovery returns
+  `initializationBlock`, permitting a bounded single-block lookup for old pools. Without
+  that field, the fallback covers 1,000 blocks and fails closed if no reference is found.
+  Canonical PositionManager maximum amounts still enforce the reviewed mint on-chain if
+  the price moves after quoting; a quote-time check alone is not transaction protection.
+- Swaps require an on-chain deadline as well as minimum output. Old quotes without a
+  deadline are rejected, and the unsafe five-argument router ABI is no longer supported.
+- Typed upgrade proposals reject an unexpected trusted-forwarder change. This is not
+  a sandbox for arbitrary governance code: an approved upgrade remains a powerful action
+  requiring review. DAO quorum and the timelock do not replace an independent audit.
+
+These fixes change reward economics and the swap ABI. Regenerate/consume the matching
+artifacts together; do not point the new swap client at an old router. Existing deployments
+would need an explicitly reviewed governance migration and reward-budget adjustment.
+Cross-device deployment leases and concurrent backend deployment-record updates belong
+to the application/backend and are not solved by this library's transaction journal.
 
 The ERC-2771 forwarder is deployed with the contracts, but gas sponsorship also requires
 an off-chain relayer that validates allowed targets/selectors and pays transaction gas.
@@ -172,10 +210,19 @@ call. The runner validates sender, destination and calldata, reuses receipts, an
 skips completed ownership/role changes. Missing or mismatched transactions stop
 recovery rather than triggering another deployment. The parent frontend stores
 this journal locally before syncing it to the Venture owner's private backend record
-at `/api/startups/:id/deployment-recovery?walletAddress=...` (GET/PUT/DELETE).
+at `/api/startups/:id/deployment-recovery?walletAddress=...` (GET/PUT/POST/DELETE).
 The same marketplace login and wallet can resume on another device. New deployments
 are blocked until the backend journal loads; failed synchronization retains the local
 hash backup. Completed manifest persistence can be retried without redeployment.
+
+The application acquires an exclusive runner identity before deployment and supplies
+`beforeTransaction` to recheck journal ownership before each new wallet submission.
+Recovery takeover and abandonment require explicit confirmation after all other
+sessions and wallet prompts have stopped and pending nonces/hashes are reconciled.
+Takeover is revision/snapshot checked; archival preserves evidence and prevents the
+retired runner from restarting. Neither operation revokes already signed transactions.
+Saved deployment registrations are append-only and merged atomically on the backend,
+so one browser cannot overwrite another browser's deployed addresses with an old list.
 
 `scripts/deploy.ts` is only the console runner. It loads the same artifacts through
 Hardhat, calls the browser-safe function, and writes the resulting manifest to disk.

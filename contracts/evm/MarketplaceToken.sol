@@ -30,7 +30,7 @@ contract MarketplaceToken is
     /// @notice DAO address authorized to manage soulbound balances and upgrades.
     address public governance;
     mapping(address => uint256) private _soulboundBalances;
-    /// @notice Timestamp when the account's current continuous soulbound period began.
+    /// @notice Timestamp of the most recent rooted-balance change; rewards require 30 unchanged days.
     mapping(address => uint256) public soulboundSince;
 
     error UpgradesDisabled();
@@ -123,7 +123,8 @@ contract MarketplaceToken is
         unchecked {
             _soulboundBalances[account] = current - amount;
         }
-        if (_soulboundBalances[account] == 0) soulboundSince[account] = 0;
+        soulboundSince[account] =
+            _soulboundBalances[account] == 0 ? 0 : block.timestamp;
         _transferVotingUnits(account, address(0), amount);
         emit TokensUnsoulbound(account, amount);
     }
@@ -164,8 +165,8 @@ contract MarketplaceToken is
         if (amount > liquidBalance)
             revert InsufficientLiquidBalance(liquidBalance, amount);
         _soulboundBalances[account] += amount;
-        if (soulboundSince[account] == 0)
-            soulboundSince[account] = block.timestamp;
+        // A tiny old balance must not mature a newly rooted large allocation immediately.
+        soulboundSince[account] = block.timestamp;
         _transferVotingUnits(address(0), account, amount);
         if (delegates(account) == address(0)) {
             _delegate(account, account);

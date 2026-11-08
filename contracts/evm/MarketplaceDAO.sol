@@ -13,6 +13,7 @@ import {GovernorVotesQuorumFractionUpgradeable} from "@openzeppelin/contracts-up
 import {GovernorTimelockControlUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorTimelockControlUpgradeable.sol";
 import {TimelockControllerUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/TimelockControllerUpgradeable.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IMarketplaceDAO} from "../shared/IMarketplaceDAO.sol";
 import {IMarketplaceToken} from "../shared/IMarketplaceToken.sol";
@@ -37,7 +38,7 @@ contract MarketplaceDAO is
     uint32 public constant VOTING_PERIOD = 7 days;
     /// @notice Minimum rooted-token votes required to submit a proposal.
     uint256 public constant PROPOSAL_THRESHOLD = 1 ether;
-    /// @notice Percentage of historical rooted-token supply required for quorum.
+    /// @notice Percentage of the whole fixed token supply required for quorum.
     uint256 public constant QUORUM_PERCENT = 4;
     /// @notice Minimum time before successful Governor operations can execute.
     uint256 public constant TIMELOCK_DELAY = 2 days;
@@ -46,7 +47,7 @@ contract MarketplaceDAO is
 
     IMarketplaceToken private _marketplaceToken;
     MarketplaceLPToken private _rewardToken;
-    /// @notice Reward-token amount eligible rooted holders may claim each period.
+    /// @notice Monthly reward budget per entire fixed supply; holders receive their rooted fraction.
     uint256 public rewardPerPeriod;
     /// @notice Whether DAO governance may upgrade this implementation.
     bool public upgradesEnabled;
@@ -118,7 +119,7 @@ contract MarketplaceDAO is
         return address(_rewardToken);
     }
 
-    /// @notice Sets the amount minted per eligible claim; callable only through DAO execution.
+    /// @notice Sets the supply-wide monthly reward budget through timelocked DAO execution.
     function setRewardPerPeriod(uint256 amount) external onlyGovernance {
         rewardPerPeriod = amount;
         emit RewardPerPeriodUpdated(amount);
@@ -150,26 +151,55 @@ contract MarketplaceDAO is
         _marketplaceToken.soulboundFor(account, amount);
     }
 
-    /// @notice Mints one period of rewards after 30 continuous days rooted and the claim interval.
-    function claimReward() external override {
-        address account = _msgSender();
-        if (_marketplaceToken.soulboundBalanceOf(account) == 0)
-            revert NothingToClaim();
-
+    /// @notice Returns a holder's proportional reward after a full period at the current rooted balance.
+    function claimableReward(address account) public view returns (uint256) {
+        uint256 rooted = _marketplaceToken.soulboundBalanceOf(account);
         uint256 boundSince = _marketplaceToken.soulboundSince(account);
         uint256 eligibleSince =
             lastClaimAt[account] > boundSince
                 ? lastClaimAt[account]
                 : boundSince;
         if (
-            rewardPerPeriod == 0 ||
-            eligibleSince == 0 ||
+            rooted == 0 ||
+            boundSince == 0 ||
             block.timestamp < eligibleSince + CLAIM_PERIOD
-        ) revert NothingToClaim();
+        ) return 0;
+        return
+            Math.mulDiv(
+                rewardPerPeriod,
+                rooted,
+                _marketplaceToken.totalSupply()
+            );
+    }
 
+    /// @notice Mints the holder's supply-weighted monthly reward, preventing flat per-address payouts.
+    function claimReward() external override {
+        address account = _msgSender();
+        uint256 amount = claimableReward(account);
+        if (amount == 0) revert NothingToClaim();
         lastClaimAt[account] = block.timestamp;
-        _rewardToken.mint(account, rewardPerPeriod);
-        emit RewardClaimed(account, rewardPerPeriod);
+        _rewardToken.mint(account, amount);
+        emit RewardClaimed(account, amount);
+    }
+
+    /// @notice Uses the whole fixed ERC-20 supply as quorum's denominator, never just early rooted votes.
+    function quorum(
+        uint256 timepoint
+    )
+        public
+        view
+        override(GovernorUpgradeable, GovernorVotesQuorumFractionUpgradeable)
+        returns (uint256)
+    {
+        // Preserve OpenZeppelin's historical numerator and reject future snapshots.
+        super.quorum(timepoint);
+        return
+            Math.mulDiv(
+                _marketplaceToken.totalSupply(),
+                quorumNumerator(timepoint),
+                quorumDenominator(),
+                Math.Rounding.Ceil
+            );
     }
 
     /// @notice Enables DAO implementation upgrades unless permanently frozen.

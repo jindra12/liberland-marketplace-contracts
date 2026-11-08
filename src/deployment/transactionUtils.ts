@@ -2,18 +2,25 @@ import {
     AbiCoder,
     Contract,
     ContractFactory,
-    getAddress,
     keccak256,
     parseEther,
+    isError,
+    id,
     ZeroAddress,
     type ContractTransactionResponse,
     type TransactionRequest,
     type TransactionReceipt,
+    type TransactionResponse,
 } from "ethers";
 import { sqrt } from "@uniswap/sdk-core";
 import JSBI from "jsbi";
 import clientAbis from "../generated/clientAbis.json";
 import type { BrowserEvmDeploymentOptions } from "./browser";
+import { validateV4Infrastructure } from "../client/utils";
+import {
+    findReplacementTransaction,
+    matchesDeploymentTransaction,
+} from "./recoveryUtils";
 
 type DeploymentArgument = string | number | bigint | boolean | string[];
 
@@ -46,33 +53,78 @@ export const executeDeploymentTransaction = async (
     request: TransactionRequest,
     submit: (fees: TransactionRequest) => Promise<ContractTransactionResponse>,
 ): Promise<TransactionReceipt> => {
-    const previous = options.transactions?.find(
-        (entry) => entry.label === label,
-    );
+    const previous = options.transactions
+        ?.slice()
+        .reverse()
+        .find((entry) => entry.label === label);
     const provider = options.signer.provider!;
+    const sender = await options.signer.getAddress();
+    const chainId = (await provider.getNetwork()).chainId;
+    const matches = (transaction: TransactionResponse) =>
+        matchesDeploymentTransaction(
+            transaction,
+            request,
+            sender,
+            chainId,
+            previous,
+        );
+    if (!previous && options.beforeTransaction) {
+        await options.beforeTransaction();
+    }
     const transaction = previous
-        ? await provider.getTransaction(previous.hash)
+        ? ((await provider.getTransaction(previous.hash)) ??
+          (await findReplacementTransaction(provider, previous, matches)))
         : await submit(await deploymentFees(options));
     if (!transaction) {
         throw new Error(
             `Cannot find the submitted ${label} transaction. Do not redeploy until it is resolved.`,
         );
     }
-    if (
-        getAddress(transaction.from) !==
-            getAddress(await options.signer.getAddress()) ||
-        transaction.data !== request.data ||
-        (transaction.to ? getAddress(transaction.to) : null) !==
-            (request.to ? getAddress(String(request.to)) : null)
-    ) {
+    if (!matches(transaction)) {
         throw new Error(
             `Saved transaction does not match the ${label} deployment step.`,
         );
     }
-    if (!previous && options.onSubmitted) {
-        await options.onSubmitted({ label, hash: transaction.hash });
+    const record = async (response: TransactionResponse) => {
+        if (options.onSubmitted) {
+            await options.onSubmitted({
+                label,
+                hash: response.hash,
+                nonce: response.nonce,
+                chainId: response.chainId.toString(),
+                submittedAtBlock: await provider.getBlockNumber(),
+            });
+        }
+    };
+    if (!previous || previous.hash !== transaction.hash) {
+        await record(transaction);
     }
-    const receipt = await transaction.wait();
+    const waitForReceipt = async (): Promise<TransactionReceipt | null> => {
+        try {
+            return await transaction
+                .replaceableTransaction(
+                    previous?.submittedAtBlock ??
+                        Math.max(0, (await provider.getBlockNumber()) - 63),
+                )
+                .wait();
+        } catch (error) {
+            if (!isError(error, "TRANSACTION_REPLACED")) {
+                throw error;
+            }
+            if (
+                error.cancelled ||
+                !matches(error.replacement) ||
+                error.replacement.nonce !== transaction.nonce
+            ) {
+                throw new Error(
+                    `Replacement does not match the ${label} deployment step. Do not redeploy until it is resolved.`,
+                );
+            }
+            await record(error.replacement);
+            return error.receipt;
+        }
+    };
+    const receipt = await waitForReceipt();
     if (!receipt || receipt.status !== 1) {
         throw new Error(`${label} did not confirm successfully.`);
     }
@@ -104,11 +156,14 @@ export const deployContract = async (
             `The ${label} deployment has no contract code on this network.`,
         );
     }
-    return new Contract(
-        receipt.contractAddress,
-        factory.interface,
-        options.signer,
-    );
+    return {
+        receipt,
+        contract: new Contract(
+            receipt.contractAddress,
+            factory.interface,
+            options.signer,
+        ),
+    };
 };
 
 export const callDeploymentContract = async (
@@ -175,16 +230,54 @@ export const initializeVenturePool = async (
         clientAbis.poolManager,
         options.signer,
     );
-    await executeDeploymentTransaction(
-        options,
-        "ETH/token pool initialization",
-        await manager.getFunction("initialize").populateTransaction(key, price),
-        (fees) => manager.getFunction("initialize")(key, price, fees),
-    );
-    return keccak256(
+    const poolId = keccak256(
         AbiCoder.defaultAbiCoder().encode(
             ["address", "address", "uint24", "int24", "address"],
             [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks],
         ),
     );
+    const network = await validateV4Infrastructure(options.signer, {
+        poolManagerAddress: options.poolManagerAddress,
+    });
+    const state = new Contract(
+        network.stateViewAddress,
+        [
+            "function getSlot0(bytes32) view returns (uint160,int24,uint24,uint24)",
+        ],
+        options.signer.provider,
+    );
+    const initialized = async () => {
+        const slot = await state.getFunction("getSlot0")(poolId);
+        if (BigInt(slot[0]) === 0n) {
+            return false;
+        }
+        if (BigInt(slot[0]) !== price) {
+            throw new Error(
+                "The existing pool price differs from the requested starting price. Review it before resuming deployment.",
+            );
+        }
+        return true;
+    };
+    if (await initialized()) {
+        return poolId;
+    }
+    try {
+        await executeDeploymentTransaction(
+            options,
+            "ETH/token pool initialization",
+            await manager
+                .getFunction("initialize")
+                .populateTransaction(key, price),
+            (fees) => manager.getFunction("initialize")(key, price, fees),
+        );
+    } catch (error) {
+        if (
+            !isError(error, "CALL_EXCEPTION") ||
+            error.data !== id("PoolAlreadyInitialized()").slice(0, 10) ||
+            !(await initialized())
+        ) {
+            throw error;
+        }
+    }
+    return poolId;
 };

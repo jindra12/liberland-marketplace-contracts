@@ -6,6 +6,7 @@ import {MarketplaceDAO} from "./MarketplaceDAO.sol";
 /// @custom:oz-upgrades-unsafe-allow missing-initializer
 contract MarketplaceDAOV2Mock is MarketplaceDAO {
     /// @notice Deploys the test-only DAO upgrade target with the configured forwarder.
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address trustedForwarder_) MarketplaceDAO(trustedForwarder_) {}
 
     /// @notice Returns the test-only implementation version marker.

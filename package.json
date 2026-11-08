@@ -20,6 +20,7 @@
         "export:artifacts": "tsx scripts/export-browser-artifacts.ts",
         "compile:solidity": "tsx scripts/compile-solidity.ts",
         "test": "hardhat test",
+        "test:fork": "hardhat test integration/FirstLiquidity.ts",
         "estimate:deployment": "tsx scripts/estimate-deployment.ts",
         "format": "prettier --write \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",
         "format:check": "prettier --check \"contracts/**/*.sol\" \"test/**/*.ts\" \"scripts/**/*.ts\"",

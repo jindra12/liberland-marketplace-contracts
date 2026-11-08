@@ -17,6 +17,7 @@ import {
     getVenturePoolPrice,
     initializeVenturePool,
 } from "./transactionUtils";
+import { validateV4Infrastructure } from "../client/utils";
 
 export const DEFAULT_INITIAL_SUPPLY = parseUnits("21000000", 18);
 
@@ -44,6 +45,8 @@ export interface BrowserEvmDeploymentOptions {
     timelockArtifact: DeploymentArtifact;
     proxyArtifact: DeploymentArtifact;
     transactions?: DeploymentTransaction[];
+    /** Applications can fail closed when a deployment runner no longer owns its journal. */
+    beforeTransaction?: () => Promise<void>;
     onSubmitted?: (transaction: DeploymentTransaction) => Promise<void> | void;
     onTransaction?: (
         label: string,
@@ -106,26 +109,36 @@ export const deployMarketplaceFromBrowser = async (
         );
     }
     const initialSupply = options.initialSupply ?? DEFAULT_INITIAL_SUPPLY;
+    if (initialSupply <= 0n || initialSupply >= 1n << 208n) {
+        throw new Error(
+            "The fixed voting supply must be positive and fit uint208.",
+        );
+    }
+    if (!options.tokenName || !options.tokenSymbol) {
+        throw new Error(
+            "Token name and symbol are required before deployment.",
+        );
+    }
+    await validateV4Infrastructure(options.signer, {
+        poolManagerAddress: options.poolManagerAddress,
+        positionManagerAddress: options.positionManagerAddress,
+        permit2Address: options.permit2Address,
+    });
     getVenturePoolPrice(options);
-    const forwarder = await deployContract(
-        new ContractFactory(
-            options.forwarderArtifact.abi,
-            options.forwarderArtifact.bytecode,
-            options.signer,
-        ),
-        "ERC-2771 forwarder",
-        options,
-    );
+    const { contract: forwarder, receipt: forwarderReceipt } =
+        await deployContract(
+            new ContractFactory(
+                options.forwarderArtifact.abi,
+                options.forwarderArtifact.bytecode,
+                options.signer,
+            ),
+            "ERC-2771 forwarder",
+            options,
+        );
     const forwarderAddress = await forwarder.getAddress();
-    const forwarderTransaction = options.transactions?.find(
-        (entry) => entry.label === "ERC-2771 forwarder",
-    );
-    const deploymentBlock = forwarderTransaction
-        ? (await provider.getTransactionReceipt(forwarderTransaction.hash))!
-              .blockNumber
-        : await provider.getBlockNumber();
+    const deploymentBlock = forwarderReceipt.blockNumber;
 
-    const tokenImplementation = await deployContract(
+    const { contract: tokenImplementation } = await deployContract(
         new ContractFactory(
             options.tokenArtifact.abi,
             options.tokenArtifact.bytecode,
@@ -148,7 +161,7 @@ export const deployMarketplaceFromBrowser = async (
         options.proxyArtifact.bytecode,
         options.signer,
     );
-    const tokenProxy = await deployProxy(
+    const { contract: tokenProxy } = await deployProxy(
         proxyFactory,
         await tokenImplementation.getAddress(),
         tokenInitialization,
@@ -156,7 +169,7 @@ export const deployMarketplaceFromBrowser = async (
         options,
     );
 
-    const swapImplementation = await deployContract(
+    const { contract: swapImplementation } = await deployContract(
         new ContractFactory(
             options.swapArtifact.abi,
             options.swapArtifact.bytecode,
@@ -169,7 +182,7 @@ export const deployMarketplaceFromBrowser = async (
     const swapInitialization = new Interface(
         options.swapArtifact.abi,
     ).encodeFunctionData("initialize", [options.poolManagerAddress, deployer]);
-    const swapProxy = await deployProxy(
+    const { contract: swapProxy } = await deployProxy(
         proxyFactory,
         await swapImplementation.getAddress(),
         swapInitialization,
@@ -177,7 +190,7 @@ export const deployMarketplaceFromBrowser = async (
         options,
     );
 
-    const rewardImplementation = await deployContract(
+    const { contract: rewardImplementation } = await deployContract(
         new ContractFactory(
             options.rewardArtifact.abi,
             options.rewardArtifact.bytecode,
@@ -187,7 +200,7 @@ export const deployMarketplaceFromBrowser = async (
         options,
         [forwarderAddress],
     );
-    const timelockImplementation = await deployContract(
+    const { contract: timelockImplementation } = await deployContract(
         new ContractFactory(
             options.timelockArtifact.abi,
             options.timelockArtifact.bytecode,
@@ -204,14 +217,14 @@ export const deployMarketplaceFromBrowser = async (
         ["0x0000000000000000000000000000000000000000"],
         deployer,
     ]);
-    const timelock = await deployProxy(
+    const { contract: timelock } = await deployProxy(
         proxyFactory,
         await timelockImplementation.getAddress(),
         timelockInitialization,
         "timelock proxy",
         options,
     );
-    const daoImplementation = await deployContract(
+    const { contract: daoImplementation } = await deployContract(
         new ContractFactory(
             options.daoArtifact.abi,
             options.daoArtifact.bytecode,
@@ -229,7 +242,7 @@ export const deployMarketplaceFromBrowser = async (
         await timelock.getAddress(),
         await rewardImplementation.getAddress(),
     ]);
-    const daoProxy = await deployProxy(
+    const { contract: daoProxy } = await deployProxy(
         proxyFactory,
         await daoImplementation.getAddress(),
         daoInitialization,
